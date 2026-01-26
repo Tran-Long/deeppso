@@ -1,0 +1,25 @@
+version: '3'
+
+services:
+  env:
+    container_name: deeppso_zsh_env
+    build: .
+    image: deeppso:torch2.8.0
+    hostname: deeppso_env
+    environment:
+      - NVIDIA_DISABLE_REQUIRE=1
+    volumes:
+     - /home/parzival/projects:/home/parzival/projects
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+
+    shm_size: 64gb
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    
+    command: tail -f /dev/null

@@ -1,0 +1,81 @@
+{
+    "name": "deeppso_env",
+    "dockerComposeFile": "./docker-compose.yml",
+    "service": "env",
+    "workspaceFolder": "/home/parzival/projects",
+    "shutdownAction": "stopCompose",
+    "customizations": {
+        // Configure properties specific to VS Code.
+        "vscode": {
+          // Add the IDs of extensions you want installed when the container is created.
+          "extensions": [
+            "ms-python.black-formatter",
+            "ms-python.autopep8",
+            "ms-python.isort",
+            "ms-toolsai.jupyter",
+            "ms-toolsai.vscode-jupyter-cell-tags",
+            "ms-toolsai.jupyter-keymap",
+            "ms-toolsai.jupyter-renderers",
+            "ms-toolsai.vscode-jupyter-slideshow",
+            "ms-python.vscode-pylance",
+            "ms-python.python",
+            "mechatroner.rainbow-csv",
+            "vscode-icons-team.vscode-icons",
+            "dracula-theme.theme-dracula",
+            "GrapeCity.gc-excelviewer",
+            "njpwerner.autodocstring",
+            "github.copilot"
+          ],
+          "settings": {
+            "[python]": {
+              "editor.defaultFormatter": "ms-python.black-formatter",
+              "editor.formatOnSave": true,
+              "editor.codeActionsOnSave": {
+                  "source.organizeImports": "always"
+              }
+            },
+            "isort.args":["--profile", "black"],
+            "files.autoSave": "afterDelay",
+            "workbench.startupEditor": "none",
+            "workbench.colorTheme": "Dracula",
+            "editor.minimap.size": "fit",
+            "editor.minimap.showSlider": "always",
+            "tabnine.experimentalAutoImports": true,
+            "git.enableSmartCommit": true,
+            "terminal.integrated.enableMultiLinePasteWarning": "auto",
+            "terminal.integrated.fontFamily": "SauceCodePro Nerd Font",
+            "security.workspace.trust.untrustedFiles": "open",
+            "update.showReleaseNotes": false,
+            "workbench.iconTheme": "vscode-icons",
+            "git.openRepositoryInParentFolders": "never",
+            "explorer.confirmDragAndDrop": false,
+            "files.exclude": {
+                "**/__pycache__": true
+            },
+            "workbench.colorCustomizations": {
+                "terminal.background":"#282936",
+                "terminal.foreground":"#E9E9F4",
+                "terminalCursor.background":"#E9E9F4",
+                "terminalCursor.foreground":"#E9E9F4",
+                "terminal.ansiBlack":"#282936",
+                "terminal.ansiBlue":"#62D6E8",
+                "terminal.ansiBrightBlack":"#626483",
+                "terminal.ansiBrightBlue":"#62D6E8",
+                "terminal.ansiBrightCyan":"#A1EFE4",
+                "terminal.ansiBrightGreen":"#EBFF87",
+                "terminal.ansiBrightMagenta":"#B45BCF",
+                "terminal.ansiBrightRed":"#EA51B2",
+                "terminal.ansiBrightWhite":"#F7F7FB",
+                "terminal.ansiBrightYellow":"#00F769",
+                "terminal.ansiCyan":"#A1EFE4",
+                "terminal.ansiGreen":"#EBFF87",
+                "terminal.ansiMagenta":"#B45BCF",
+                "terminal.ansiRed":"#EA51B2",
+                "terminal.ansiWhite":"#E9E9F4",
+                "terminal.ansiYellow":"#00F769"
+            },
+            "explorer.confirmPasteNative": false
+          }
+        }
+      }
+}

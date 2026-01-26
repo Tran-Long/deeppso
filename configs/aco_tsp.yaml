@@ -1,0 +1,8 @@
+problem: TSPProblem
+n_cities: 20
+k_sparse: 10
+n_ants: 20
+device: "cuda"
+step_per_epoch: 128
+aco_iterations_infer: 20
+epochs: 5
