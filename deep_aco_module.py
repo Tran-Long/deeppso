@@ -73,10 +73,16 @@ class DeepACOModule(L.LightningModule):
         opt = self.optimizers()
         costs, log_probs = aco.sample()
         baseline = costs.mean()
+
         reinforce_loss = torch.sum((costs - baseline) * log_probs.sum(dim=0)) / aco.n_ants
         opt.zero_grad()
         self.manual_backward(reinforce_loss)
         
+        # Log gradient norm (must be after backward, before step)
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.net.parameters(), float("inf")
+        )
+        self.log("gradient_norm", grad_norm, prog_bar=True, batch_size=1)
         opt.step()
         self.log("train_loss", reinforce_loss, prog_bar=True, batch_size=1)
 

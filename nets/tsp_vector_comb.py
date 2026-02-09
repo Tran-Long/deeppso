@@ -83,6 +83,34 @@ class TSPVectorCNN1DModel(nn.Module):
         o = self.avg_global_pool(o)
         return self.fc(o).squeeze()
 
+class TSPVectorPopGraph(nn.Module):
+    def __init__(self, embed_dim=32, n_gcns=3, act_fn='silu', k_sparse=None, loop=False):
+        super().__init__()
+        self.stem = Conv1dBlock(1, embed_dim, kernel_size=1, padding=0, act_fn=act_fn)
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.gcns = nn.ModuleList([gnn.GCNConv(embed_dim, embed_dim) for _ in range(n_gcns)])
+        self.out_gcn = gnn.GCNConv(embed_dim, 3)
+        self.act_fn = getattr(F, act_fn)
+        self.k_sparse = k_sparse
+        self.loop = loop
+    
+    def forward(self, pop):
+        x = pop.unsqueeze(1)  # (n_particles, 1, n_cities)
+        x = self.stem(x)     # (n_particles, embed_dim, n_cities)
+        x = self.pool(x).squeeze(-1)  # (n_particles, embed_dim)
+
+        n_particles = x.size(0)
+        edge_index = gnn.knn_graph(x, k=self.k_sparse if self.k_sparse is not None else n_particles, loop=self.loop)
+        
+        for gcn in self.gcns:
+            x = gcn(x, edge_index)
+            x = self.act_fn(x)
+        
+        x = self.out_gcn(x, edge_index)  # (n_particles, 3)
+        x = F.softmax(x, dim=-1)
+        return x
+
+
 
 class TSPVectorGraphCombined(nn.Module):
     def __init__(self, n_particles=50, embed_dim=32, act_fn='silu'):

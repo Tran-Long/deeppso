@@ -2,7 +2,7 @@
     "name": "deeppso_env",
     "dockerComposeFile": "./docker-compose.yml",
     "service": "env",
-    "workspaceFolder": "/home/parzival/projects",
+    "workspaceFolder": "/home/longth/projects",
     "shutdownAction": "stopCompose",
     "customizations": {
         // Configure properties specific to VS Code.

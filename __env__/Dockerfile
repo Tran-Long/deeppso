@@ -1,5 +1,6 @@
 # Use a base image
-FROM nvcr.io/nvidia/pytorch:25.08-py3
+#CUDA 12.8
+FROM nvcr.io/nvidia/pytorch:25.03-py3 
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /build
@@ -31,3 +32,4 @@ RUN pip install --upgrade pip
 
 # Install requirements list
 RUN pip install -r requirements.txt
+RUN pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.7.0+cu128.html

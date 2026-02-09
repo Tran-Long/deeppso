@@ -1,6 +1,6 @@
 problem: TSPProblem
-n_cities: 20
-k_sparse: 10
+n_cities: 100
+k_sparse: 100
 n_ants: 20
 device: "cuda"
 step_per_epoch: 128

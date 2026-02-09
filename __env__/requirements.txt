@@ -11,7 +11,7 @@ networkx
 # torchaudio
 torch_geometric
 lightning==2.6.0
-lightning-utilities==0.14.3
+lightning-utilities==0.14.0
 timm
 torchmetrics[text]
 transformers==4.57.3
@@ -33,10 +33,10 @@ pillow==11.1.0
 pyyaml==6.0.2
 requests
 
-scikit-learn==1.6.0
-scikit-image==0.25.2
-opencv-python==4.10.0.84
-opencv-contrib-python==4.10.0.84
+scikit-learn
+scikit-image
+opencv-python
+opencv-contrib-python
 tqdm
 einops
 Polygon3

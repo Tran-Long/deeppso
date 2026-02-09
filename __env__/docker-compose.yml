@@ -9,7 +9,7 @@ services:
     environment:
       - NVIDIA_DISABLE_REQUIRE=1
     volumes:
-     - /home/parzival/projects:/home/parzival/projects
+     - /home/longth/projects:/home/longth/projects
     deploy:
       resources:
         reservations:

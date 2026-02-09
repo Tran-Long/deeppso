@@ -81,7 +81,8 @@ class TSPProblem(BaseProblem):
     def from_coordinates(cls, coordinates: torch.Tensor, k_sparse: Optional[int] = None, device="cpu"):
         n_cities = coordinates.shape[0]
         if k_sparse is None:
-            k_sparse = max(n_cities // 10, cls.MIN_K_SPARSE)
+            # k_sparse = max(n_cities // 10, cls.MIN_K_SPARSE)
+            k_sparse = n_cities
         problem_instance = cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=coordinates.shape[1], device=device)
         problem_instance.coordinates = coordinates
         problem_instance.distance_matrix = torch.norm(coordinates[:, None] - coordinates, dim=2, p=2)
