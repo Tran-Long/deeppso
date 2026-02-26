@@ -40,6 +40,7 @@ trainer = L.Trainer(
     accelerator="auto",
     devices="auto",
     num_sanity_val_steps=0,
+    log_every_n_steps=10,
     callbacks=[GradientNormLogger()],
 )
 trainer.fit(model, datamodule=data_module)

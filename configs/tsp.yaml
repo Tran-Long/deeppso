@@ -1,12 +1,13 @@
 problem: TSPProblem
 n_cities: [20, 100]
-k_sparse: [20, 100]
+k_sparse: [5, 10]
 # n_particles: [20, 20, 50]
 n_particles: 128
+eval_n_starts: 10
 mode: "choice" # "range" or "choice"
 device: "cuda"
-step_per_epoch: 256
+step_per_epoch: 64
 
-pso_iterations_train: 8
+pso_iterations_train: 32
 net_update_interval: "step" # "step" or "full" 
-pso_iterations_infer: 32
+pso_iterations_infer: 128

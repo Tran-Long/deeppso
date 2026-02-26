@@ -1,49 +1,52 @@
 from functools import cached_property
+import random
 from typing import Optional
 from .base import BaseProblem
 import torch
 from pathlib import Path
 from torch_geometric.data import Data
 
+def get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode) -> dict[int, int]:
+    if isinstance(n_cities, int):
+        if k_sparse is None:
+            k_sparse = n_cities
+        elif not isinstance(k_sparse, int):
+            raise ValueError("k_sparse should be an integer or None when n_cities is an integer.")
+        return {n_cities: k_sparse}
+    else:
+        if mode == "range":
+            assert len(n_cities) == 2, "n_cities should be a tuple of (min_cities, max_nodes) in 'range' mode."
+            n_cities_list = list(range(n_cities[0], n_cities[1]+1))
+            if k_sparse is None:
+                return {n: n for n in n_cities_list}
+            elif isinstance(k_sparse, int):
+                return {n: k_sparse for n in n_cities_list}
+            else:
+                raise ValueError("k_sparse should be an integer or None in 'range' mode.")
+        elif mode == "choice":
+            assert isinstance(n_cities, list), "n_cities should be a list of choices in 'choice' mode."
+            if k_sparse is None:
+                return {n: n for n in n_cities}
+            elif isinstance(k_sparse, list):
+                assert len(k_sparse) == len(n_cities), "k_sparse list length should match n_cities list length in 'choice' mode."
+                return dict(zip(n_cities, k_sparse))
+            elif isinstance(k_sparse, int):
+                return {n: k_sparse for n in n_cities}
+            else:
+                raise ValueError("k_sparse should be an integer, list, or None in 'choice' mode.")
+        else:
+            raise ValueError("mode should be either 'range' or 'choice'.")
+
+
 class TSPProblem(BaseProblem):
     VAL_DATA_FOLDER = Path(__file__).parents[1] / 'data' / 'tsp'
     MIN_K_SPARSE = 10
     def __init__(self, n_cities: int | tuple[int, int] | list[int], k_sparse: Optional[int | list[int]], n_dims=2, mode="range", device="cpu", **kwargs):
         super().__init__()
-        if isinstance(n_cities, int):
-            self.n_cities = n_cities
-            if k_sparse is None:
-                self.k_sparse = max(self.n_cities // 10, self.MIN_K_SPARSE)
-            elif isinstance(k_sparse, int):
-                self.k_sparse = k_sparse
-            else:
-                raise ValueError("k_sparse should be an integer or None when n_cities is an integer.")
-        else:
-            if mode == "range":
-                assert len(n_cities) == 2, "n_cities should be a tuple of (min_cities, max_nodes) in 'range' mode."
-                self.n_cities = torch.randint(n_cities[0], n_cities[1]+1, (1,)).item()
-                if k_sparse is None:
-                    self.k_sparse = max(self.n_cities // 10, self.MIN_K_SPARSE)
-                elif isinstance(k_sparse, int):
-                    self.k_sparse = k_sparse
-                else:
-                    raise ValueError("k_sparse should be an integer or None in 'range' mode.")
-            elif mode == "choice":
-                assert isinstance(n_cities, list), "n_cities should be a list of choices in 'choice' mode."
-                idx = torch.randint(0, len(n_cities), (1,)).item()
-                self.n_cities = n_cities[idx]
-                if k_sparse is None:
-                    self.k_sparse = max(self.n_cities // 10, self.MIN_K_SPARSE)
-                elif isinstance(k_sparse, list):
-                    assert len(k_sparse) == len(n_cities), "k_sparse list length should match n_cities list length in 'choice' mode."
-                    self.k_sparse = k_sparse[idx]
-                elif isinstance(k_sparse, int):
-                    self.k_sparse = k_sparse
-                else:
-                    raise ValueError("k_sparse should be an integer, list, or None in 'choice' mode.")
-            else:
-                raise ValueError("mode should be either 'range' or 'choice'.")
-    
+        n_cities_k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
+        # Randomly choose n_cities value from the mapping for this instance
+        self.n_cities = random.choice(list(n_cities_k_sparse_mapping.keys()))
+        self.k_sparse = n_cities_k_sparse_mapping[self.n_cities]
         self.n_dims = n_dims
         self.device = device
         self.coordinates = torch.rand(self.n_cities, n_dims, device=self.device)
@@ -78,7 +81,7 @@ class TSPProblem(BaseProblem):
         return torch.sum(self.distance_matrix[u, v], dim=1)
 
     @classmethod
-    def from_coordinates(cls, coordinates: torch.Tensor, k_sparse: Optional[int] = None, device="cpu"):
+    def from_coordinates(cls, coordinates: torch.Tensor, k_sparse: Optional[int] = None, device="cpu", **kwargs):
         n_cities = coordinates.shape[0]
         if k_sparse is None:
             # k_sparse = max(n_cities // 10, cls.MIN_K_SPARSE)
@@ -89,31 +92,44 @@ class TSPProblem(BaseProblem):
         problem_instance.distance_matrix[torch.arange(n_cities), torch.arange(n_cities)] = 1e9
         return problem_instance
 
+    
     @classmethod
-    def get_val_instances(cls, extra_n_cities: Optional[list[int]] = None, extra_k_sparse: Optional[int | list[int]] = None, n_extra: Optional[int] = None, n_dims: int = 2, device="cpu", **kwargs) -> dict[str, list]:
+    def get_val_instances(cls, n_cities, k_sparse, mode, extra_eval_n_cities: Optional[list[int]] = None, extra_eval_k_sparse: Optional[int | list[int]] = None, n_extra_eval: Optional[int] = 100, n_dims: int = 2, device="cpu", **kwargs) -> dict[str, list]:
         val_datasets_dict = {}
+        n_cities2k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
+
+        all_n_cities = list(set(n_cities2k_sparse_mapping.keys()))
         if n_dims == 2:
             val_files = Path(cls.VAL_DATA_FOLDER).glob('valDataset-*.pt')
             for val_file in val_files:
                 n_cities = int(val_file.stem.split('-')[-1])
                 if n_cities > 100:
                     continue  # Skip large datasets for faster validation
+                # Remove from list if present, we will load these from files
+                all_n_cities = [n for n in all_n_cities if n != n_cities]
                 val_datasets_dict[f"n_{n_cities}_file"] = []
                 val_tensor = torch.load(val_file)
                 for coordinates in val_tensor:
                     coordinates = coordinates.to(torch.float).to(device)
-                    problem_instance = cls.from_coordinates(coordinates, device=device)
+                    problem_instance = cls.from_coordinates(coordinates, k_sparse=kwargs.get('k_sparse', None), device=device)
                     val_datasets_dict[f"n_{n_cities}_file"].append(problem_instance)
-        if extra_n_cities is not None:
-            assert n_extra is not None, "n_extra must be specified when extra_n_cities is provided."
-            if isinstance(extra_k_sparse, int) or extra_k_sparse is None:
-                extra_k_sparse_list = [extra_k_sparse] * len(extra_n_cities)
-            elif isinstance(extra_k_sparse, list):
-                assert len(extra_k_sparse) == len(extra_n_cities), "Length of extra_k_sparse list must match length of extra_n_cities list."
-                extra_k_sparse_list = extra_k_sparse
+        
+        if len(all_n_cities) > 0:
+            print(f"Warning: No validation files found for n_cities in {all_n_cities}. Generating random instances for these.")
+            for n_cities in all_n_cities:
+                k_sparse = n_cities2k_sparse_mapping[n_cities]
+                val_datasets_dict[f"n_{n_cities}_random"] = [cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(n_extra_eval)]
+
+        if extra_eval_n_cities is not None:
+            assert n_extra_eval is not None, "n_extra must be specified when extra_n_cities is provided."
+            if isinstance(extra_eval_k_sparse, int) or extra_eval_k_sparse is None:
+                extra_k_sparse_list = [extra_eval_k_sparse] * len(extra_eval_n_cities)
+            elif isinstance(extra_eval_k_sparse, list):
+                assert len(extra_eval_k_sparse) == len(extra_eval_n_cities), "Length of extra_k_sparse list must match length of extra_n_cities list."
+                extra_k_sparse_list = extra_eval_k_sparse
             else:
                 raise ValueError("extra_k_sparse should be an integer, list, or None.")
-            for n_cities, k_sparse in zip(extra_n_cities, extra_k_sparse_list):
-                val_datasets_dict[f"n_{n_cities}_extra"] = [cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(n_extra)]
+            for n_cities, k_sparse in zip(extra_eval_n_cities, extra_k_sparse_list):
+                val_datasets_dict[f"n_{n_cities}_extra"] = [cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(n_extra_eval)]
             
         return val_datasets_dict
