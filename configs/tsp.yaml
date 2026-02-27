@@ -1,13 +1,46 @@
-problem: TSPProblem
-n_cities: [20, 100]
-k_sparse: [5, 10]
-# n_particles: [20, 20, 50]
-n_particles: 128
-eval_n_starts: 10
-mode: "choice" # "range" or "choice"
-device: "cuda"
-step_per_epoch: 64
+# problem: TSPProblem
+# n_cities: [20, 100]
+# k_sparse: [5, 10]
+# # n_particles: [20, 20, 50]
+# n_particles: 128
+# eval_n_starts: 10
+# mode: "choice" # "range" or "choice"
+# device: "cuda"
+# step_per_epoch: 64
 
-pso_iterations_train: 32
-net_update_interval: "step" # "step" or "full" 
-pso_iterations_infer: 128
+# pso_iterations_train: 32
+# net_update_interval: "step" # "step" or "full" 
+# pso_iterations_infer: 128
+
+env:
+  # General env settings
+  problem_cls: "TSPProblem"
+  n_particles: 128
+  step_per_epoch: 32
+
+  # Problem specific settings
+  n_cities: 20
+  k_sparse: 5
+  mode: "choice" # "range" or "choice"
+  eval_n_starts: 5
+  init_n_heuristic: 0
+
+rl_agent:
+  name: "TSPAgent"
+  args:
+    emb_dim: 32
+    act_fn: "silu"
+
+rl_train:
+  name: "PolicyGradientNaive"
+  args:
+    pso_iterations_train: 32
+    pso_iterations_infer: 64
+
+trainer:
+  max_epochs: 100
+  accelerator: "auto"
+  devices: "auto"
+  num_sanity_val_steps: 0
+  log_every_n_steps: 16
+  

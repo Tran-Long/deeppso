@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from envs import TSPEnvVectorEdge, TSPProblem
+from envs import TSPProblem
 
-from .nets import *
+from .model import *
 
 
 class TSPActorNet(nn.Module):
@@ -25,6 +25,7 @@ class TSPActorNet(nn.Module):
         self,
         emb_dim=32,
         act_fn="silu",
+        **kwargs,
     ):
         super().__init__()
         self.emb_dim = emb_dim
@@ -56,7 +57,6 @@ class TSPActorNet(nn.Module):
             act_fn=act_fn,
         )
         self.sigmoid = nn.Sigmoid()
-        self.device = next(self.parameters()).device
 
     def get_problem_embedding(self, tsp_problem: TSPProblem):
         """Use to cache the TSP embedding since it doesn't change during PSO iterations."""
@@ -103,6 +103,8 @@ class TSPActorNet(nn.Module):
         # --- 2. Per-edge TSP embedding ---
         if problem_embedding is None:
             tsp_embedding = self.get_problem_embedding(problem)
+        else:
+            tsp_embedding = problem_embedding
 
         # --- 3. Cross-attention ---
         # Context: [edge_embs(dim, D), gbest(1, D), swarm_mean(1, D)]
@@ -158,4 +160,91 @@ class TSPActorNet(nn.Module):
         wc1c2_sigma = torch.cat(
             [w_sig, c1_sig, c2_sig], dim=-1
         )  # (n_particles, dim, 3)
+        return wc1c2_mu, wc1c2_sigma
+
+    def forward_batch(
+        self,
+        pos: torch.Tensor,
+        vel: torch.Tensor,
+        pbest: torch.Tensor,
+        gbest: torch.Tensor,
+        k_sparse: int,
+        problem_embeddings: torch.Tensor,
+    ):
+        """Batched forward pass for parallel validation.
+
+        Args:
+            pos, vel, pbest: (B, n_particles, dim)
+            gbest: (B, dim)
+            k_sparse: int (same for all envs in batch)
+            problem_embeddings: (B, dim, emb_dim) — pre-computed GNN embeddings
+        Returns:
+            wc1c2_mu:    (B, n_particles, dim, 3)
+            wc1c2_sigma: (B, n_particles, dim, 3)
+        """
+        B, n_particles, dim = pos.shape
+
+        # --- 1. Particle & gbest embeddings (loop over batch — SwarmEncoder
+        #     uses k_sparse-aware pooling that doesn't trivially vectorise) ---
+        particle_embs = []
+        gbest_embs = []
+        for b in range(B):
+            pe, ge = self.swarm_emb(
+                pos[b], vel[b], pbest[b], gbest[b], k_sparse=k_sparse
+            )
+            particle_embs.append(pe)
+            gbest_embs.append(ge)
+        particle_embeddings = torch.stack(particle_embs)  # (B, n_particles, D)
+        gbest_embedding = torch.stack(gbest_embs)  # (B, 1, D)
+
+        # --- 2. Cross-attention (natively supports batch dim with batch_first=True) ---
+        swarm_mean = particle_embeddings.mean(dim=1, keepdim=True)  # (B, 1, D)
+        context = torch.cat(
+            [
+                problem_embeddings + self.edge_type_emb,  # (B, dim, D)
+                gbest_embedding + self.gbest_type_emb,  # (B, 1, D)
+                swarm_mean + self.swarm_type_emb,  # (B, 1, D)
+            ],
+            dim=1,
+        )  # (B, dim+2, D)
+
+        attn_output, _ = self.cross_attention(
+            query=particle_embeddings,  # (B, n_particles, D)
+            key=context,  # (B, dim+2, D)
+            value=context,  # (B, dim+2, D)
+        )  # (B, n_particles, D)
+        particle_ctx = self.layer_norm_attn(
+            attn_output + particle_embeddings
+        )  # (B, n_particles, D)
+
+        # --- 3. Per-edge feature assembly (all ops broadcast over B) ---
+        gbest_exp = gbest.unsqueeze(1).expand_as(pos)  # (B, n_particles, dim)
+        local_feats = torch.stack(
+            [pos, vel, pbest, gbest_exp], dim=-1
+        )  # (B, n_particles, dim, 4)
+
+        edge_emb_exp = problem_embeddings.unsqueeze(1).expand(
+            -1, n_particles, -1, -1
+        )  # (B, n_particles, dim, D)
+        ctx_exp = particle_ctx.unsqueeze(2).expand(
+            -1, -1, dim, -1
+        )  # (B, n_particles, dim, D)
+
+        edge_input = torch.cat(
+            [local_feats, edge_emb_exp, ctx_exp], dim=-1
+        )  # (B, n_particles, dim, 4+2D)
+
+        # --- 4. Shared MLP (supports arbitrary leading dims) ---
+        raw_mu = self.edge_head_mu(edge_input)
+        raw_sigma = self.edge_head_sigma(edge_input)
+
+        w_mu = 0.4 + 0.5 * self.sigmoid(raw_mu[..., 0:1])
+        c1_mu = 1.0 + 2.0 * self.sigmoid(raw_mu[..., 1:2])
+        c2_mu = 1.0 + 2.0 * self.sigmoid(raw_mu[..., 2:3])
+        w_sig = 0.1 + 0.3 * self.sigmoid(raw_sigma[..., 0:1])
+        c1_sig = 0.2 + 0.8 * self.sigmoid(raw_sigma[..., 1:2])
+        c2_sig = 0.2 + 0.8 * self.sigmoid(raw_sigma[..., 2:3])
+
+        wc1c2_mu = torch.cat([w_mu, c1_mu, c2_mu], dim=-1)
+        wc1c2_sigma = torch.cat([w_sig, c1_sig, c2_sig], dim=-1)
         return wc1c2_mu, wc1c2_sigma

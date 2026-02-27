@@ -1,5 +1,6 @@
 import torch
-from problems import BaseProblem
+
+from ..problems import BaseProblem
 
 
 class BaseEnvPSOProblem:
@@ -61,7 +62,13 @@ class BaseEnvPSOProblem:
             self.problem,
         ), {}
 
-    def step(self, wc1c2: torch.Tensor, **kwargs) -> tuple[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, BaseProblem], torch.Tensor, torch.Tensor | None, torch.Tensor | None, dict]:
+    def step_train(self, wc1c2: torch.Tensor, **kwargs) -> tuple[
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, BaseProblem],
+        torch.Tensor,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        dict,
+    ]:
         """
         Compatible to the OpenAI Gym interface
 
@@ -69,13 +76,23 @@ class BaseEnvPSOProblem:
             wc1c2 (Tensor): "actions" - shape (n_particles, dim, 3) — per-edge hyperparameters
             **kwargs: any additional info needed for stepping, e.g., pre-computed problem embedding
         Returns:
-            observations (tuple[Tensor, Tensor, Tensor, Tensor, TSPProblem]): (population, velocity, pbest, gbest, problem) — the new state after stepping with wc1c2 
+            observations (tuple[Tensor, Tensor, Tensor, Tensor, TSPProblem]): (population, velocity, pbest, gbest, problem) — the new state after stepping with wc1c2
             reward (Tensor): evaluation value (cost, **maximize is better**) for each particle after the step, shape (n_particles,)
-            terminated (Tensor): False for all particles (PSO doesn't have terminal states), shape (n_particles,) or maybe None 
-            truncated (Tensor): False for all particles (PSO doesn't have truncated states), shape (n_particles,) or maybe None 
+            terminated (Tensor): False for all particles (PSO doesn't have terminal states), shape (n_particles,) or maybe None
+            truncated (Tensor): False for all particles (PSO doesn't have truncated states), shape (n_particles,) or maybe None
             info (dict): optional dict for extra info
         """
         raise NotImplementedError("This method should be overridden by subclasses.")
+
+    def step_eval(self, wc1c2: torch.Tensor, **kwargs) -> tuple[
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, BaseProblem],
+        torch.Tensor,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        dict,
+    ]:
+        """Default: same stepping for training and evaluation. Subclasses can override for different behavior."""
+        return self.step_train(wc1c2, **kwargs)
 
     def update_metadata(self, costs: torch.Tensor):
         self.population = self.population.detach().clone()

@@ -1,7 +1,7 @@
 import torch
 import torch.distributions as dist
-from problems import TSPProblem
 
+from ..problems import TSPProblem
 from .base import BaseEnvPSOProblem
 
 
@@ -25,10 +25,10 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
         self.k_sparse = problem.k_sparse
         self.dim = self.n_cities * self.k_sparse
         self.eval_n_starts = eval_n_starts
-        self.init_n_heuristic = init_n_heuristic
         assert (
-            self.init_n_heuristic <= self.n_particles
+            init_n_heuristic <= n_particles
         ), "Cannot initialize more heuristic particles than total particles."
+        self.init_n_heuristic = init_n_heuristic
         super().__init__(n_particles, problem, device=device)
 
     def initialize_population(
@@ -84,7 +84,9 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
         weights[is_tour_edge] = 3.0
         return weights
 
-    def step(self, wc1c2: torch.Tensor, temperature: float, using_random: bool = True):
+    def step(
+        self, wc1c2: torch.Tensor, temperature: float = 1.0, using_random: bool = True, return_stochastic_cost: bool = True, **kwargs
+    ):
         w = wc1c2[..., 0]  # shape: (n_particles, dim)
         c1 = wc1c2[..., 1]  # shape: (n_particles, dim)
         c2 = wc1c2[..., 2]  # shape: (n_particles, dim)
@@ -103,22 +105,32 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
         self.velocity = torch.clamp(self.velocity, -4.0, 4.0)
         self.population = self.population + self.velocity
 
-        # Get stochastic cost for training signal
-        _, costs_stochastic = self.decode_solutions(
-            stochastic=True, temperature=temperature
-        )
-
         # Get deterministic cost for metadata update
         _, costs = self.decode_solutions_eval()
         self.update_metadata(costs)
 
+        # Get stochastic cost for training signal
+        if return_stochastic_cost:
+            _, return_cost = self.decode_solutions(
+                stochastic=True, temperature=temperature
+            )
+        else:
+            return_cost = costs  # Use deterministic cost if not returning stochastic cost
+
         return (
             (self.population, self.velocity, self.pbest, self.gbest, self.problem),
-            -costs_stochastic,
+            -return_cost, # Negate cost to make it a reward (maximize is better)
             None,
             None,
             {},
         )
+
+    def step_train(self, wc1c2, temperature=1.0, using_random=True):
+        return self.step(wc1c2, return_stochastic_cost=True, temperature=temperature, using_random=using_random)
+
+    def step_eval(self, wc1c2: torch.Tensor, using_random: bool = True):
+        return self.step(wc1c2, return_stochastic_cost=False, using_random=using_random)
+
 
     def decode_solutions(
         self,

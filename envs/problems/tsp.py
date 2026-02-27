@@ -97,23 +97,25 @@ class TSPProblem(BaseProblem):
     def get_val_instances(cls, n_cities, k_sparse, mode, extra_eval_n_cities: Optional[list[int]] = None, extra_eval_k_sparse: Optional[int | list[int]] = None, n_extra_eval: Optional[int] = 100, n_dims: int = 2, device="cpu", **kwargs) -> dict[str, list]:
         val_datasets_dict = {}
         n_cities2k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
-
         all_n_cities = list(set(n_cities2k_sparse_mapping.keys()))
         if n_dims == 2:
-            val_files = Path(cls.VAL_DATA_FOLDER).glob('valDataset-*.pt')
+            val_files = Path(cls.VAL_DATA_FOLDER).glob('testDataset-*.pt')
             for val_file in val_files:
-                n_cities = int(val_file.stem.split('-')[-1])
-                if n_cities > 100:
+                n_cities_file = int(val_file.stem.split('-')[-1])
+                if n_cities_file > 50:
                     continue  # Skip large datasets for faster validation
                 # Remove from list if present, we will load these from files
-                all_n_cities = [n for n in all_n_cities if n != n_cities]
-                val_datasets_dict[f"n_{n_cities}_file"] = []
+                all_n_cities = [n for n in all_n_cities if n != n_cities_file]
+                val_datasets_dict[f"n_{n_cities_file}_file"] = []
                 val_tensor = torch.load(val_file)
+                cnt = 0
                 for coordinates in val_tensor:
                     coordinates = coordinates.to(torch.float).to(device)
-                    problem_instance = cls.from_coordinates(coordinates, k_sparse=kwargs.get('k_sparse', None), device=device)
-                    val_datasets_dict[f"n_{n_cities}_file"].append(problem_instance)
-        
+                    problem_instance = cls.from_coordinates(coordinates, k_sparse=n_cities2k_sparse_mapping.get(n_cities_file, cls.MIN_K_SPARSE), device=device)
+                    val_datasets_dict[f"n_{n_cities_file}_file"].append(problem_instance)
+                    cnt += 1
+                    if cnt >= 150:  # Limit number of instances per file to avoid memory issues
+                        break
         if len(all_n_cities) > 0:
             print(f"Warning: No validation files found for n_cities in {all_n_cities}. Generating random instances for these.")
             for n_cities in all_n_cities:
@@ -131,5 +133,4 @@ class TSPProblem(BaseProblem):
                 raise ValueError("extra_k_sparse should be an integer, list, or None.")
             for n_cities, k_sparse in zip(extra_eval_n_cities, extra_k_sparse_list):
                 val_datasets_dict[f"n_{n_cities}_extra"] = [cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(n_extra_eval)]
-            
         return val_datasets_dict

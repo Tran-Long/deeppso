@@ -2,8 +2,15 @@ import pytorch_lightning as L
 import torch
 import yaml
 
-from deep_pso_module import DeepPSOModule
-from problems import ProblemDataModule, TSPProblem
+from envs import EnvDataModule
+from pl_raw import PolicyGradientNaive
+from rl_agents import TSPAgent
+
+
+def init_module(config, **kwargs):
+    module_cls = eval(config["name"])
+    module_args = config.get("args", {})
+    return module_cls(**module_args, **kwargs)
 
 
 class GradientNormLogger(L.Callback):
@@ -19,7 +26,7 @@ class GradientNormLogger(L.Callback):
         if pl_module.global_step % trainer.log_every_n_steps == 0:
             # 1. Calculate the L2 Norm (without clipping)
             grad_norm = torch.nn.utils.clip_grad_norm_(
-                pl_module.net.parameters(), max_norm=float("inf")
+                pl_module.parameters(), max_norm=float("inf")
             )
 
             # 2. Log the value using the Lightning logger
@@ -29,18 +36,31 @@ class GradientNormLogger(L.Callback):
             )
 
 
-config = yaml.safe_load(open("configs/tsp.yaml", "r"))
+if __name__ == "__main__":
+    import argparse
 
-model = DeepPSOModule(**config)
-config["problem_cls"] = eval(config["problem"])
-data_module = ProblemDataModule(**config)
+    parser = argparse.ArgumentParser(
+        description="Train a PSO agent on via Policy Gradient Naive."
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to the YAML configuration file.",
+    )
+    # Read config
+    args = parser.parse_args()
+    config = yaml.load(open(args.config, "r"), Loader=yaml.FullLoader)
 
-trainer = L.Trainer(
-    max_epochs=100,
-    accelerator="auto",
-    devices="auto",
-    num_sanity_val_steps=0,
-    log_every_n_steps=10,
-    callbacks=[GradientNormLogger()],
-)
-trainer.fit(model, datamodule=data_module)
+    # Start training
+    trainer = L.Trainer(
+        **config["trainer"],
+        callbacks=[GradientNormLogger()],
+    )
+    # decide device for data module from trainer
+    device = trainer.accelerator.name() if trainer.accelerator else "cpu"
+
+    env_module = EnvDataModule(**config["env"], device=device)
+    rl_agent = init_module(config["rl_agent"])
+    rl_train = init_module(config["rl_train"], agent=rl_agent)
+
+    trainer.fit(rl_train, env_module)

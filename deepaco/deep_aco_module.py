@@ -1,8 +1,9 @@
 import pytorch_lightning as L
+import torch
 
-from nets import ACOGraphNet
-from problems import TSPProblem
-from pso import *
+from .aco_net import Net as ACOGraphNet
+from envs.pso import TSPEnvVectorEdge
+from .aco import ACO
 
 
 class DeepACOModule(L.LightningModule):
@@ -60,14 +61,14 @@ class DeepACOModule(L.LightningModule):
         optimizer = torch.optim.Adam(self.net.parameters(), lr=3e-4)
         return optimizer
 
-    def training_step(self, problem: TSPProblem, idx):
-        heu_vec = self.net(problem.pyg_data.to(self.device))
-        heu_mat = self.net.reshape(problem.pyg_data.to(self.device), heu_vec) + 1e-9
+    def training_step(self, env: TSPEnvVectorEdge, idx):
+        heu_vec = self.net(env.problem.pyg_data.to(self.device))
+        heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
 
         aco = ACO(
             n_ants=self.n_ants,
             heuristic=heu_mat,
-            distances=problem.distance_matrix,
+            distances=env.distance_matrix,
             device=self.device,
         )
         opt = self.optimizers()
@@ -86,13 +87,13 @@ class DeepACOModule(L.LightningModule):
         opt.step()
         self.log("train_loss", reinforce_loss, prog_bar=True, batch_size=1)
 
-    def validation_step(self, problem: TSPProblem, idx, dataloader_idx=0):
-        heu_vec = self.net(problem.pyg_data.to(self.device))
-        heu_mat = self.net.reshape(problem.pyg_data.to(self.device), heu_vec) + 1e-9
+    def validation_step(self, env: TSPEnvVectorEdge, idx, dataloader_idx=0):
+        heu_vec = self.net(env.problem.pyg_data.to(self.device))
+        heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
         aco = ACO(
             n_ants=self.n_ants,
             heuristic=heu_mat,
-            distances=problem.distance_matrix,
+            distances=env.distance_matrix,
             device=self.device
             )
         costs, log_probs = aco.sample()

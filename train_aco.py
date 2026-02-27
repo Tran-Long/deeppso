@@ -1,8 +1,8 @@
-from deep_aco_module import DeepACOModule
+from deepaco.deep_aco_module import DeepACOModule
 import pytorch_lightning as L
 import torch
 import yaml
-from problems import ProblemDataModule, TSPProblem
+from envs import EnvDataModule, TSPProblem
 
 class GradientNormLogger(L.Callback):
     def on_before_optimizer_step(self, trainer: L.Trainer, pl_module: L.LightningModule, optimizer: torch.optim.Optimizer) -> None:
@@ -30,8 +30,7 @@ config = yaml.safe_load(open("configs/aco_tsp.yaml", "r"))
 
 model = DeepACOModule(**config)
 n_epochs = config.pop("epochs", 100)
-config["problem_cls"] = eval(config["problem"])
-data_module = ProblemDataModule(**config)
+data_module = EnvDataModule(**config)
 
 trainer = L.Trainer(max_epochs=n_epochs, accelerator="auto", devices="auto", num_sanity_val_steps=0, callbacks=[GradientNormLogger()])
 trainer.fit(model, datamodule=data_module)
