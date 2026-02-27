@@ -1,7 +1,7 @@
 import pytorch_lightning as L
 
 from nets import ACOGraphNet
-from problems import ACO, TSPProblem
+from problems import TSPProblem
 from pso import *
 
 

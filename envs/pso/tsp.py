@@ -1,42 +1,11 @@
-import random
-
-import numpy as np
 import torch
 import torch.distributions as dist
+from problems import TSPProblem
 
-from problems import BaseProblem, TSPProblem
-
-
-class BaseParticlePopulationModel:
-    def __init__(self, n_particles, problem: BaseProblem, device="cpu", **kwargs):
-        self.n_particles = n_particles
-        self.problem = problem
-        self.device = device
-
-        self.population: torch.Tensor = self.initialize_population()
-        _, initial_costs = self.decode_solutions_multistart()
-        self.update_metadata(initial_costs)
-
-    def initialize_population(self) -> torch.Tensor:
-        raise NotImplementedError("This method should be overridden by subclasses.")
-
-    def decode_solutions(self):
-        raise NotImplementedError("This method should be overridden by subclasses.")
-
-    def decode_solutions_multistart(self):
-        """Default: single decode + evaluate. Subclasses can override."""
-        solutions = self.decode_solutions()
-        costs = self.problem.evaluate(solutions)
-        return solutions, costs
-
-    def step(self, wc1c2: torch.Tensor):
-        raise NotImplementedError("This method should be overridden by subclasses.")
-
-    def update_metadata(self, costs: torch.Tensor):
-        raise NotImplementedError("This method should be overridden by subclasses.")
+from .base import BaseEnvPSOProblem
 
 
-class TSPVectorEdgePP(BaseParticlePopulationModel):
+class TSPEnvVectorEdge(BaseEnvPSOProblem):
     """
     Each particle is represented as a continuous vector of size n_cities.
     Values in the vector are in range [0, 1], representing the priority of visiting each city.
@@ -44,30 +13,34 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
     """
 
     def __init__(
-        self, n_particles: int, problem: TSPProblem, device="cpu", eval_n_starts=1, init_n_heuristic=0
+        self,
+        n_particles: int,
+        problem: TSPProblem,
+        device="cpu",
+        eval_n_starts=1,
+        init_n_heuristic=0,
+        **kwargs,
     ):
         self.n_cities = problem.n_cities
         self.k_sparse = problem.k_sparse
         self.dim = self.n_cities * self.k_sparse
         self.eval_n_starts = eval_n_starts
         self.init_n_heuristic = init_n_heuristic
-        assert self.init_n_heuristic <= self.n_particles, "Cannot initialize more heuristic particles than total particles."
+        assert (
+            self.init_n_heuristic <= self.n_particles
+        ), "Cannot initialize more heuristic particles than total particles."
         super().__init__(n_particles, problem, device=device)
 
-    def initialize_population(self) -> torch.Tensor:
-        self.val_pbest = torch.full(
-            (self.n_particles,), float("inf"), device=self.device
-        )
-        self.val_gbest = torch.tensor(float("inf"), device=self.device)
-        self.pbest = torch.zeros(
+    def initialize_population(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        pbest = torch.zeros(
             (self.n_particles, self.dim), dtype=torch.float, device=self.device
         )
-        self.gbest = torch.zeros((self.dim,), dtype=torch.float, device=self.device)
-        self.velocity = torch.zeros(
+        gbest = torch.zeros((self.dim,), dtype=torch.float, device=self.device)
+        velocity = torch.zeros(
             (self.n_particles, self.dim), dtype=torch.float, device=self.device
         )
-        # --- Nearest-neighbour warm-start: seed 25 % of particles ---
-        # n_heuristic = self.n_particles // 4
         population = []
         for i in range(self.init_n_heuristic):
             start_city = i % self.n_cities
@@ -79,7 +52,7 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
         for _ in range(self.n_particles - self.init_n_heuristic):
             particle = torch.randn(self.dim, dtype=torch.float, device=self.device)
             population.append(particle)
-        return torch.stack(population)
+        return torch.stack(population), velocity, pbest, gbest
 
     def _nearest_neighbor_tour(self, start_city: int = 0) -> torch.Tensor:
         """Greedy nearest-neighbour heuristic: always visit the closest unvisited city."""
@@ -111,8 +84,7 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
         weights[is_tour_edge] = 3.0
         return weights
 
-    def step(self, wc1c2: torch.Tensor, using_random: bool = False):
-        # wc1c2: shape (n_particles, dim, 3) — per-edge hyperparameters
+    def step(self, wc1c2: torch.Tensor, temperature: float, using_random: bool = True):
         w = wc1c2[..., 0]  # shape: (n_particles, dim)
         c1 = wc1c2[..., 1]  # shape: (n_particles, dim)
         c2 = wc1c2[..., 2]  # shape: (n_particles, dim)
@@ -131,41 +103,26 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
         self.velocity = torch.clamp(self.velocity, -4.0, 4.0)
         self.population = self.population + self.velocity
 
-    # def decode_solutions(self, return_log_probs=False):
-    #     mat = torch.full((self.n_particles, self.n_cities, self.n_cities), float('-inf'), device=self.population.device)
-    #     mat[:, self.problem.pyg_data.edge_index[0], self.problem.pyg_data.edge_index[1]] = self.population
-    #     start = torch.randint(low=0, high=self.n_cities, size=(self.n_particles,), device=self.population.device)
-    #     mask = torch.ones((self.n_particles, self.n_cities), device=self.population.device)
-    #     mask[torch.arange(self.n_particles), start] = 0
-    #     paths_list = [start]; log_probs_list = []
-    #     prev = start
-    #     for i in range(self.n_cities - 1):
-    #         cur_mat = mat[torch.arange(self.n_particles), prev, :]  # shape: (n_particles, n_cities)
-    #         masked_mat = cur_mat.masked_fill(mask == 0, float('-inf'))  # shape: (n_particles, n_cities)
-    #         # if any row is all -inf (should not happen), replace with uniform distribution
-    #         all_inf_mask = (masked_mat == float('-inf')).all(dim=1)
-    #         if all_inf_mask.any():
-    #             masked_mat[all_inf_mask] = 0.0  # uniform logits
-    #         d = dist.Categorical(logits=masked_mat)
-    #         actions = d.sample()  # shape: (n_particles,)
-    #         paths_list.append(actions)
-    #         log_probs = d.log_prob(actions)  #shape: (n_particles,)
-    #         log_probs_list.append(log_probs)
-    #         mask[torch.arange(self.n_particles), actions] = 0
-    #         prev = actions
+        # Get stochastic cost for training signal
+        _, costs_stochastic = self.decode_solutions(
+            stochastic=True, temperature=temperature
+        )
 
-    #     paths = torch.stack(paths_list)  # shape: (n_cities, n_particles)
-    #     paths = paths.T  # shape: (n_particles, n_cities)
-    #     # for tour in paths:
-    #     #     assert len(set(tour.tolist())) == self.n_cities, f"Invalid tour decoded: \n{tour.tolist()}"
-    #     if return_log_probs:
-    #         log_probs = torch.stack(log_probs_list)  # shape: (n_cities, n_particles)
-    #         return paths, log_probs
-    #     return paths
+        # Get deterministic cost for metadata update
+        _, costs = self.decode_solutions_eval()
+        self.update_metadata(costs)
+
+        return (
+            (self.population, self.velocity, self.pbest, self.gbest, self.problem),
+            -costs_stochastic,
+            None,
+            None,
+            {},
+        )
 
     def decode_solutions(
         self,
-        stochastic: bool = False,
+        stochastic: bool = True,
         start: torch.Tensor = None,
         temperature: float = 1.0,
     ):
@@ -178,6 +135,7 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
                    If None, a random start city is sampled per particle.
             temperature: temperature for stochastic sampling (higher = more random).
         """
+        # convert population edge weights into a (n_particles, n_cities, n_cities) matrix for decoding
         mat = torch.full(
             (self.n_particles, self.n_cities, self.n_cities),
             float("-inf"),
@@ -186,6 +144,8 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
         mat[
             :, self.problem.pyg_data.edge_index[0], self.problem.pyg_data.edge_index[1]
         ] = self.population
+
+        # Sample start cities if not provided
         if start is None:
             start = torch.randint(
                 low=0,
@@ -193,10 +153,14 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
                 size=(self.n_particles,),
                 device=self.population.device,
             )
+
+        # mask to keep track of visited cities: 1 = unvisited, 0 = visited. Initially all cities are unvisited except the start city.
         mask = torch.ones(
             (self.n_particles, self.n_cities), device=self.population.device
         )
         mask[torch.arange(self.n_particles), start] = 0
+
+        # iteratively build tours by selecting the next city based on the current city's edge weights, masked by unvisited cities.
         paths_list = [start]
         prev = start
         for i in range(self.n_cities - 1):
@@ -206,16 +170,19 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
             masked_mat = cur_mat.masked_fill(
                 mask == 0, float("-inf")
             )  # shape: (n_particles, n_cities)
-            # if any row is all -inf (should not happen), replace with uniform distribution
+            # check if any row is all -inf (should not happen)
             all_inf_mask = (masked_mat == float("-inf")).all(dim=1)
             if all_inf_mask.any():
+                # if happend, replace with uniform distribution on unvisited cities
                 masked_mat[all_inf_mask] = 0.0  # uniform logits
                 masked_mat = masked_mat.masked_fill(mask == 0, float("-inf"))
             if stochastic:
+                # sample from distribution with temperature
                 actions = dist.Categorical(
                     logits=masked_mat / temperature
                 ).sample()  # shape: (n_particles,)
             else:
+                # greedy argmax
                 actions = torch.argmax(masked_mat, dim=1)  # shape: (n_particles,)
             paths_list.append(actions)
             mask[torch.arange(self.n_particles), actions] = 0
@@ -223,13 +190,18 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
 
         paths = torch.stack(paths_list)  # shape: (n_cities, n_particles)
         paths = paths.T  # shape: (n_particles, n_cities)
+
+        # sanity check: each tour should visit all cities exactly once
         for tour in paths:
             assert (
                 len(set(tour.tolist())) == self.n_cities
             ), f"Invalid tour decoded: \n{tour.tolist()}"
-        return paths
 
-    def decode_solutions_multistart(self):
+        # evaluate costs of decoded tours
+        costs = self.problem.evaluate(paths)
+        return paths, costs
+
+    def decode_solutions_eval(self):
         """
         Multi-start greedy decode: try multiple start cities per particle,
         keep the tour with the lowest cost.  This gives a robust, deterministic
@@ -252,8 +224,7 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
         best_paths = None
         best_costs = torch.full((self.n_particles,), float("inf"), device=self.device)
         for s in starts.T:
-            paths = self.decode_solutions(stochastic=False, start=s)
-            costs = self.problem.evaluate(paths)
+            paths, costs = self.decode_solutions(stochastic=False, start=s)
             improved = costs < best_costs
             if best_paths is None:
                 best_paths = paths
@@ -262,11 +233,6 @@ class TSPVectorEdgePP(BaseParticlePopulationModel):
                 best_paths[improved] = paths[improved]
                 best_costs[improved] = costs[improved]
         return best_paths, best_costs
-
-    def decode_solutions_eval(self):
-        # population: shape (n_particles, n_cities)
-        paths = torch.argsort(self.population, dim=1)  # shape: (n_particles, n_cities)
-        return paths
 
     def update_metadata(self, costs: torch.Tensor):
         self.population = self.population.detach().clone()

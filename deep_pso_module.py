@@ -8,12 +8,11 @@ from pso import *
 
 class DeepPSOModule(L.LightningModule):
     MAPPING_PROBLEM_TO_PARTICLE = {
-        TSPProblem: TSPVectorEdgePP,
+        TSPProblem: TSPParticleVectorEdge,
     }
 
     def __init__(
         self,
-        n_cities: int | tuple[int, int] | list[int],
         n_particles: int,
         pso_iterations_train: int = 10,
         pso_iterations_infer: int = 20,
@@ -21,7 +20,6 @@ class DeepPSOModule(L.LightningModule):
         **kwargs,
     ):
         super().__init__()
-        self.n_cities = n_cities
         self.pso_iterations_train = pso_iterations_train
         self.pso_iterations_infer = pso_iterations_infer
 
@@ -93,10 +91,9 @@ class DeepPSOModule(L.LightningModule):
             particle_population.step(wc1c2, using_random=True)
 
             # --- Stochastic decode for REINFORCE gradient ---
-            solutions_stochastic = particle_population.decode_solutions(
+            _, costs_stochastic = particle_population.decode_solutions(
                 stochastic=True, temperature=temperature
             )
-            costs_stochastic = problem.evaluate(solutions_stochastic)
 
             if self.rl_mode == "reinforce_advantage":
                 
@@ -115,7 +112,7 @@ class DeepPSOModule(L.LightningModule):
             # Entropy bonus (mean over dim to keep scale stable)
             entropy = (
                 wc1c2_dist.entropy().sum(dim=-1).mean()
-            )  # mean over (particles, dim)
+            ) 
             loss = reinforce_loss - 0.01 * entropy
 
             # Add to the live graph — backward is deferred until after the loop.
@@ -123,7 +120,7 @@ class DeepPSOModule(L.LightningModule):
 
             # --- Greedy multi-start decode for PSO metadata (pbest / gbest) ---
             with torch.no_grad():
-                _, costs_greedy = particle_population.decode_solutions_multistart()
+                _, costs_greedy = particle_population.decode_solutions_eval()
             particle_population.update_metadata(costs_greedy)
 
         # Single backward + optimizer step after all PSO iterations.
@@ -174,7 +171,7 @@ class DeepPSOModule(L.LightningModule):
             wc1c2 = wc1c2_dist.sample()  # (n_particles, dim, 3)
             particle_population.step(wc1c2, using_random=True)
             # solutions = particle_population.decode_solutions_eval()
-            _, costs = particle_population.decode_solutions_multistart()
+            _, costs = particle_population.decode_solutions_eval()
             particle_population.update_metadata(costs)
 
         self.val_gbest_dataloader["wc1c2"][dataloader_idx] = self.val_gbest_dataloader[

@@ -1,25 +1,25 @@
-from typing import Optional
-
 import pytorch_lightning as L
 from torch.utils.data import DataLoader
 
+from .problems import *
+from .pso import *
 
-class BaseProblem:
-    # Each instance will be a single data sample, e.g., a TSP instance
-    def __init__(self, **kwargs):
-        pass
-
-    def evaluate(self, solutions):
-        raise NotImplementedError("This method should be overridden by subclasses.")
-
-    @classmethod
-    def get_val_instances(cls, device="cpu", **kwargs) -> dict[str, list]:
-        raise NotImplementedError("This method should be overridden by subclasses.")
+MAPPING_PROBLEM_TO_PARTICLE = {
+    TSPProblem: TSPEnvVectorEdge,
+}
 
 
 class ProblemDataset:
-    def __init__(self, problem_cls: BaseProblem, step_per_epoch: int = 1000, device="cpu", **kwargs):
+    def __init__(
+        self,
+        problem_cls: BaseProblem,
+        n_particles,
+        step_per_epoch: int = 1000,
+        device="cpu",
+        **kwargs
+    ):
         self.problem_cls = problem_cls
+        self.n_particles = n_particles
         self.step_per_epoch = step_per_epoch
         self.device = device
         self.kwargs = kwargs
@@ -28,7 +28,15 @@ class ProblemDataset:
         return self.step_per_epoch
 
     def __getitem__(self, idx):
-        return self.problem_cls(device=self.device, **self.kwargs)
+        problem = self.problem_cls(device=self.device, **self.kwargs)
+        particle_cls = MAPPING_PROBLEM_TO_PARTICLE[self.problem_cls]
+        return particle_cls(
+            n_particles=self.n_particles,
+            problem=problem,
+            device=self.device,
+            **self.kwargs,
+        )
+
 
 def single_collate_fn(batch):
     # Since each dataset is a single instance, we just return the instance itself
@@ -36,11 +44,23 @@ def single_collate_fn(batch):
 
 
 class ProblemDataModule(L.LightningDataModule):
-    def __init__(self, problem_cls: BaseProblem, step_per_epoch: int = 128, device="cpu", **kwargs):
+    def __init__(
+        self,
+        problem_cls: BaseProblem,
+        n_particles,
+        step_per_epoch: int = 128,
+        device="cpu",
+        **kwargs
+    ):
         super().__init__()
         self.device = device
+        self.n_particles = n_particles
         self.train_dataset = ProblemDataset(
-            problem_cls, step_per_epoch=step_per_epoch, device=device, **kwargs
+            problem_cls,
+            n_particles=n_particles,
+            step_per_epoch=step_per_epoch,
+            device=device,
+            **kwargs,
         )
         self.val_datasets_dict = problem_cls.get_val_instances(device=device, **kwargs)
         self.val_dataset_name = list(self.val_datasets_dict.keys())
