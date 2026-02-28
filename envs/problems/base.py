@@ -13,7 +13,7 @@ class BaseProblem:
         raise NotImplementedError("This method should be overridden by subclasses.")
 
     @classmethod
-    def get_val_instances(cls, device="cpu", **kwargs) -> dict[str, list]:
+    def get_val_instances(cls, **kwargs) -> dict[str, list]:
         raise NotImplementedError("This method should be overridden by subclasses.")
 
 

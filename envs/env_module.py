@@ -14,18 +14,18 @@ class ProblemDataset:
         self,
         problem_cls: BaseProblem,
         n_particles,
-        step_per_epoch: int = 1000,
+        steps_per_epoch: int = 128,
         device="cpu",
         **kwargs
     ):
         self.problem_cls = problem_cls
         self.n_particles = n_particles
-        self.step_per_epoch = step_per_epoch
         self.device = device
         self.kwargs = kwargs
+        self.steps_per_epoch = steps_per_epoch
 
     def __len__(self):
-        return self.step_per_epoch
+        return self.steps_per_epoch
 
     def __getitem__(self, idx):
         problem = self.problem_cls(device=self.device, **self.kwargs)
@@ -53,24 +53,27 @@ class EnvDataModule(L.LightningDataModule):
         self,
         problem_cls: str,
         n_particles,
-        step_per_epoch: int = 128,
+        training_cfg:dict,
+        validation_cfg:dict,
         device="cpu",
         **kwargs
     ):
         super().__init__()
         self.device = device
         self.n_particles = n_particles
+        self.training_cfg = training_cfg
+        self.validation_cfg = validation_cfg
         self.problem_cls: BaseProblem = eval(problem_cls)
         env_cls = MAPPING_PROBLEM_TO_PARTICLE[self.problem_cls]
         self.train_dataset = ProblemDataset(
             self.problem_cls,
             n_particles=n_particles,
-            step_per_epoch=step_per_epoch,
             device=device,
+            **training_cfg,
             **kwargs,
         )
         self.val_problems_dict = self.problem_cls.get_val_instances(
-            device=device, **kwargs
+            device=device, **validation_cfg, **kwargs
         )
         self.val_datasets_dict = {
             name: [
@@ -86,6 +89,7 @@ class EnvDataModule(L.LightningDataModule):
         }
         self.val_dataset_name = list(self.val_datasets_dict.keys())
         self.val_datasets = list(self.val_datasets_dict.values())
+        self.val_dataloader_idx2name = {idx: name for idx, name in enumerate(self.val_datasets_dict.keys())}
 
     def train_dataloader(self):
         # Return a dataloader that yields the same dataset instance repeatedly

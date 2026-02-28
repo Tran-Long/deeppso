@@ -35,7 +35,7 @@ class ACO():
             self.max = None
         
         if pheromone is None:
-            self.pheromone = torch.ones_like(self.distances)
+            self.pheromone = torch.ones_like(self.distances, device=device)
             if min_max:
                 self.pheromone = self.pheromone * self.min
         else:

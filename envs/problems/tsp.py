@@ -94,43 +94,40 @@ class TSPProblem(BaseProblem):
 
     
     @classmethod
-    def get_val_instances(cls, n_cities, k_sparse, mode, extra_eval_n_cities: Optional[list[int]] = None, extra_eval_k_sparse: Optional[int | list[int]] = None, n_extra_eval: Optional[int] = 100, n_dims: int = 2, device="cpu", **kwargs) -> dict[str, list]:
+    def get_val_instances(cls, n_cities, k_sparse, mode="choice", random_include=True, random_size=100, n_dims=2, device="cpu", **kwargs) -> dict[str, list]:
         val_datasets_dict = {}
         n_cities2k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
         all_n_cities = list(set(n_cities2k_sparse_mapping.keys()))
         if n_dims == 2:
-            val_files = Path(cls.VAL_DATA_FOLDER).glob('testDataset-*.pt')
+            val_files = Path(cls.VAL_DATA_FOLDER).glob('valDataset-*.pt')
             for val_file in val_files:
                 n_cities_file = int(val_file.stem.split('-')[-1])
-                if n_cities_file > 50:
-                    continue  # Skip large datasets for faster validation
-                # Remove from list if present, we will load these from files
-                all_n_cities = [n for n in all_n_cities if n != n_cities_file]
-                val_datasets_dict[f"n_{n_cities_file}_file"] = []
-                val_tensor = torch.load(val_file)
-                cnt = 0
+                if n_cities_file not in all_n_cities:
+                    continue  # Skip files that don't match the n_cities values we're interested in
+                val_datasets_dict[f"{n_cities_file}_file"] = []
+                # Load and optionally limit the number of instances from the file
+                val_tensor = torch.load(val_file)[:random_size]
                 for coordinates in val_tensor:
                     coordinates = coordinates.to(torch.float).to(device)
                     problem_instance = cls.from_coordinates(coordinates, k_sparse=n_cities2k_sparse_mapping.get(n_cities_file, cls.MIN_K_SPARSE), device=device)
-                    val_datasets_dict[f"n_{n_cities_file}_file"].append(problem_instance)
-                    cnt += 1
-                    if cnt >= 150:  # Limit number of instances per file to avoid memory issues
-                        break
+                    val_datasets_dict[f"{n_cities_file}_file"].append(problem_instance)
+        need_random = []
+        for n_ct in all_n_cities:
+            if f"{n_ct}_file" not in val_datasets_dict:
+                print(f">>> [Warning]: No validation files found for n_cities in {all_n_cities}. Generating random instances for these.")
+                need_random.append(n_ct)
+            elif random_include:
+                need_random.append(n_ct)
+
+        for n_ct in need_random:
+            k_sparse = n_cities2k_sparse_mapping.get(n_ct, cls.MIN_K_SPARSE)
+            val_datasets_dict[f"{n_ct}_random"] = [cls(n_cities=n_ct, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(random_size)]
+
         if len(all_n_cities) > 0:
-            print(f"Warning: No validation files found for n_cities in {all_n_cities}. Generating random instances for these.")
             for n_cities in all_n_cities:
                 k_sparse = n_cities2k_sparse_mapping[n_cities]
-                val_datasets_dict[f"n_{n_cities}_random"] = [cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(n_extra_eval)]
-
-        if extra_eval_n_cities is not None:
-            assert n_extra_eval is not None, "n_extra must be specified when extra_n_cities is provided."
-            if isinstance(extra_eval_k_sparse, int) or extra_eval_k_sparse is None:
-                extra_k_sparse_list = [extra_eval_k_sparse] * len(extra_eval_n_cities)
-            elif isinstance(extra_eval_k_sparse, list):
-                assert len(extra_eval_k_sparse) == len(extra_eval_n_cities), "Length of extra_k_sparse list must match length of extra_n_cities list."
-                extra_k_sparse_list = extra_eval_k_sparse
-            else:
-                raise ValueError("extra_k_sparse should be an integer, list, or None.")
-            for n_cities, k_sparse in zip(extra_eval_n_cities, extra_k_sparse_list):
-                val_datasets_dict[f"n_{n_cities}_extra"] = [cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(n_extra_eval)]
+                val_datasets_dict[f"{n_cities}_random"] = [cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(random_size)]
+        print(f">>> Validation datasets for TSP prepared:")
+        for name, datasets in val_datasets_dict.items():
+            print(f"    - {name}: {len(datasets)} instances")
         return val_datasets_dict

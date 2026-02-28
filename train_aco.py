@@ -25,12 +25,26 @@ class GradientNormLogger(L.Callback):
                 on_epoch=False
             )
 
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Train an ACO agent on via Policy Gradient.")
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to the YAML configuration file.",
+    )
+    args = parser.parse_args()
 
-config = yaml.safe_load(open("configs/aco_tsp.yaml", "r"))
+    config = yaml.safe_load(open(args.config, "r"))
+    trainer = L.Trainer(
+        **config["trainer"],
+        callbacks=[GradientNormLogger()])
 
-model = DeepACOModule(**config)
-n_epochs = config.pop("epochs", 100)
-data_module = EnvDataModule(**config)
+    # decide device for data module from trainer
+    device = trainer.accelerator.name() if trainer.accelerator else "cpu"
 
-trainer = L.Trainer(max_epochs=n_epochs, accelerator="auto", devices="auto", num_sanity_val_steps=0, callbacks=[GradientNormLogger()])
-trainer.fit(model, datamodule=data_module)
+
+    data_module = EnvDataModule(**config["env"], device=device)
+    model = DeepACOModule(**config["aco_agent"])
+
+    trainer.fit(model, datamodule=data_module)

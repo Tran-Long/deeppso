@@ -12,7 +12,6 @@ class DeepACOModule(L.LightningModule):
         n_cities: int | tuple[int, int] | list[int],
         n_ants: int | tuple[int, int] | list[int],
         mode: str = "range",
-        net_update_interval: str = "step",  # "step" or "full"
         aco_iterations_infer: int = 20,
         **kwargs,
     ):
@@ -50,7 +49,6 @@ class DeepACOModule(L.LightningModule):
             else:
                 raise ValueError("mode should be either 'range' or 'choice'.")
         self.mode = mode
-        self.net_update_interval = net_update_interval
         self.aco_iterations_infer = aco_iterations_infer
 
         self.automatic_optimization = False
@@ -68,7 +66,7 @@ class DeepACOModule(L.LightningModule):
         aco = ACO(
             n_ants=self.n_ants,
             heuristic=heu_mat,
-            distances=env.distance_matrix,
+            distances=env.problem.distance_matrix,
             device=self.device,
         )
         opt = self.optimizers()
@@ -87,24 +85,25 @@ class DeepACOModule(L.LightningModule):
         opt.step()
         self.log("train_loss", reinforce_loss, prog_bar=True, batch_size=1)
 
-    def validation_step(self, env: TSPEnvVectorEdge, idx, dataloader_idx=0):
-        heu_vec = self.net(env.problem.pyg_data.to(self.device))
-        heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
-        aco = ACO(
-            n_ants=self.n_ants,
-            heuristic=heu_mat,
-            distances=env.distance_matrix,
-            device=self.device
+    def validation_step(self, envs: list[TSPEnvVectorEdge], idx, dataloader_idx=0):
+        for env in envs:
+            heu_vec = self.net(env.problem.pyg_data.to(self.device))
+            heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
+            aco = ACO(
+                n_ants=self.n_ants,
+                heuristic=heu_mat,
+                distances=env.problem.distance_matrix,
+                device=self.device
             )
-        costs, log_probs = aco.sample()
-        aco.run(n_iterations=self.aco_iterations_infer)
-        baseline = costs.mean()
-        best_sample_cost = torch.min(costs)
-        best_aco_cost = aco.lowest_cost
-        self.eval_metrics[dataloader_idx] = self.eval_metrics.get(dataloader_idx, {"baseline": [], "sample_best": [], "aco_best": []})
-        self.eval_metrics[dataloader_idx]["baseline"].append(baseline.cpu().item())
-        self.eval_metrics[dataloader_idx]["sample_best"].append(best_sample_cost.cpu().item())
-        self.eval_metrics[dataloader_idx]["aco_best"].append(best_aco_cost.cpu().item())
+            costs, _ = aco.sample()
+            aco.run(n_iterations=self.aco_iterations_infer)
+            baseline = costs.mean()
+            best_sample_cost = torch.min(costs)
+            best_aco_cost = aco.lowest_cost
+            self.eval_metrics[dataloader_idx] = self.eval_metrics.get(dataloader_idx, {"baseline": [], "sample_best": [], "aco_best": []})
+            self.eval_metrics[dataloader_idx]["baseline"].append(baseline.cpu().item())
+            self.eval_metrics[dataloader_idx]["sample_best"].append(best_sample_cost.cpu().item())
+            self.eval_metrics[dataloader_idx]["aco_best"].append(best_aco_cost.cpu().item())
     
     def on_validation_epoch_end(self):
         for dataloader_idx in self.eval_metrics:

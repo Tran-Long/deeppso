@@ -1,29 +1,28 @@
-# problem: TSPProblem
-# n_cities: [20, 100]
-# k_sparse: [5, 10]
-# # n_particles: [20, 20, 50]
-# n_particles: 128
-# eval_n_starts: 10
-# mode: "choice" # "range" or "choice"
-# device: "cuda"
-# step_per_epoch: 64
-
-# pso_iterations_train: 32
-# net_update_interval: "step" # "step" or "full" 
-# pso_iterations_infer: 128
-
+# Settings for dataset, aka environment
 env:
-  # General env settings
+  # PSO env settings
   problem_cls: "TSPProblem"
-  n_particles: 128
-  step_per_epoch: 32
+  n_particles: 64
 
-  # Problem specific settings
-  n_cities: 20
-  k_sparse: 5
-  mode: "choice" # "range" or "choice"
-  eval_n_starts: 5
+  # Problem general specific settings
+  n_dims: 2
+  eval_n_starts: 1
   init_n_heuristic: 0
+
+  training_cfg:
+    batch_size: 1
+    n_cities: 20
+    k_sparse: 5
+    mode: "choice" # "range" or "choice"
+    steps_per_epoch: 32
+  
+  validation_cfg:
+    batch_size: 4
+    n_cities: 20
+    k_sparse: 5
+    mode: "choice"
+    random_include: False
+    random_size: 100
 
 rl_agent:
   name: "TSPAgent"
@@ -38,7 +37,8 @@ rl_train:
     pso_iterations_infer: 64
 
 trainer:
-  max_epochs: 100
+  max_epochs: 10
+  val_check_interval: 1.0
   accelerator: "auto"
   devices: "auto"
   num_sanity_val_steps: 0

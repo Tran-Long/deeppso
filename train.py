@@ -62,5 +62,7 @@ if __name__ == "__main__":
     env_module = EnvDataModule(**config["env"], device=device)
     rl_agent = init_module(config["rl_agent"])
     rl_train = init_module(config["rl_train"], agent=rl_agent)
-
+    
+    rl_train.val_dataloader_idx2name = env_module.val_dataloader_idx2name  # For logging purposes
+    
     trainer.fit(rl_train, env_module)

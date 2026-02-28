@@ -26,7 +26,7 @@ class PolicyGradientNaive(L.LightningModule):
 
         # For logging
         self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}}
-        self.val_dataloader_name = {}
+        self.val_dataloader_idx2name = {}  # To be set by EnvDataModule for logging purposes
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.agent.parameters(), lr=3e-4)
@@ -160,7 +160,7 @@ class PolicyGradientNaive(L.LightningModule):
                 val_gbest_list = self.val_gbest_dataloader[key][dataloader_idx]
                 avg_val_gbest = sum(val_gbest_list) / len(val_gbest_list)
                 self.log(
-                    f"val_{key}/{self.val_dataloader_name.get(dataloader_idx, dataloader_idx)}",
+                    f"val_{key}/{self.val_dataloader_idx2name.get(dataloader_idx, dataloader_idx)}",
                     avg_val_gbest,
                     prog_bar=True,
                 )
