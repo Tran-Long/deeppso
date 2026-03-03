@@ -1,3 +1,17 @@
+# @package _global_
+
+# Hydra output directory configuration
+hydra:
+  run:
+    # Single run: logs/tsp/<version>/
+    dir: ${log.save_dir}/${log.name}/${log.version}
+  sweep:
+    # Multirun: each job gets its own subdirectory named after its overrides
+    dir: ${log.save_dir}/${log.name}/multirun
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false   # Keep cwd at the project root so relative imports & data paths work
+
 # Settings for dataset, aka environment
 env:
   # PSO env settings
@@ -22,7 +36,7 @@ env:
     k_sparse: [5, 10]
     mode: "choice"
     random_include: False
-    random_size: 100
+    random_size: 10
 
 rl_agent:
   name: "TSPAgent"
@@ -33,11 +47,11 @@ rl_agent:
 rl_train:
   name: "PolicyGradientNaive"
   args:
-    pso_iterations_train: 32
-    pso_iterations_infer: 64
+    pso_iterations_train: 3
+    pso_iterations_infer: 6
 
 trainer:
-  max_epochs: 10
+  max_epochs: 5
   val_check_interval: 1.0
   accelerator: "auto"
   devices: "auto"
