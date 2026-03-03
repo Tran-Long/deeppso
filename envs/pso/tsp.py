@@ -122,7 +122,10 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
             -return_cost, # Negate cost to make it a reward (maximize is better)
             None,
             None,
-            {},
+            {
+                "population_costs": costs.detach().cpu().numpy().tolist(),
+                "gbest_cost": self.val_gbest.item(),
+            },
         )
 
     def step_train(self, wc1c2, temperature=1.0, using_random=True):
@@ -229,7 +232,12 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
         if self.eval_n_starts is None:
             n_starts = self.n_cities
         else:
-            n_starts = self.eval_n_starts
+            if isinstance(self.eval_n_starts, int):
+                n_starts = min(self.eval_n_starts, self.n_cities)
+            elif isinstance(self.eval_n_starts, float) and 0 < self.eval_n_starts <= 1.0:
+                n_starts = max(1, int(self.eval_n_starts * self.n_cities))
+            else:
+                raise ValueError("eval_n_starts must be None, an int, or a float in (0, 1].")
         starts = torch.rand(
             self.n_particles, self.n_cities, device=self.device
         ).argsort(dim=1)[:, :n_starts]

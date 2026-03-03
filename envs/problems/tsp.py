@@ -122,11 +122,6 @@ class TSPProblem(BaseProblem):
         for n_ct in need_random:
             k_sparse = n_cities2k_sparse_mapping.get(n_ct, cls.MIN_K_SPARSE)
             val_datasets_dict[f"{n_ct}_random"] = [cls(n_cities=n_ct, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(random_size)]
-
-        if len(all_n_cities) > 0:
-            for n_cities in all_n_cities:
-                k_sparse = n_cities2k_sparse_mapping[n_cities]
-                val_datasets_dict[f"{n_cities}_random"] = [cls(n_cities=n_cities, k_sparse=k_sparse, n_dims=n_dims, device=device) for _ in range(random_size)]
         print(f">>> Validation datasets for TSP prepared:")
         for name, datasets in val_datasets_dict.items():
             print(f"    - {name}: {len(datasets)} instances")

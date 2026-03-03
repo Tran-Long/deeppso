@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from envs import BaseEnvPSOProblem
+from logger import CustomLogger
 from rl_agents import TSPAgent
 
 
@@ -15,6 +16,7 @@ class PolicyGradientNaive(L.LightningModule):
         pso_iterations_train: int = 10,
         pso_iterations_infer: int = 20,
         pso_using_random: bool = True,
+        custom_logger: CustomLogger = None,
     ):
         super().__init__()
         self.agent = agent
@@ -25,8 +27,14 @@ class PolicyGradientNaive(L.LightningModule):
         self.automatic_optimization = False  # To do manual backward and optimizer step
 
         # For logging
+        self.custom_logger: CustomLogger = custom_logger
+        assert (
+            self.custom_logger is not None
+        ), "CustomLogger instance must be provided for logging population stats during validation."
         self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}}
-        self.val_dataloader_idx2name = {}  # To be set by EnvDataModule for logging purposes
+        self.val_dataloader_idx2name = (
+            {}
+        )  # To be set by EnvDataModule for logging purposes
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.agent.parameters(), lr=3e-4)
@@ -46,7 +54,7 @@ class PolicyGradientNaive(L.LightningModule):
             prog_bar=True,
             batch_size=1,
         )
-        
+
         opt = self.optimizers()
         opt.zero_grad()
         # Pre-compute TSP graph embedding once per problem instance.
@@ -121,7 +129,7 @@ class PolicyGradientNaive(L.LightningModule):
 
         # 3. Batched PSO loop
         k_sparse = envs[0].problem.k_sparse
-        for _iter in range(self.pso_iterations_infer):
+        for pso_idx in range(self.pso_iterations_infer):
             # Stack observations for batched forward pass
             batch_pos = torch.stack(
                 [obs[0] for obs in all_obs]
@@ -146,8 +154,14 @@ class PolicyGradientNaive(L.LightningModule):
 
             # Step each env with its slice (env state update is per-env)
             for i, env in enumerate(envs):
-                all_obs[i], _, _, _, _ = env.step_eval(
+                all_obs[i], _, _, _, info = env.step_eval(
                     batch_wc1c2[i], using_random=self.pso_using_random
+                )
+                self.custom_logger.log_population_stats(
+                    self.val_dataloader_idx2name.get(dataloader_idx, dataloader_idx),
+                    idx * len(envs) + i,
+                    pso_idx,
+                    info["population_costs"],
                 )
 
         self.val_gbest_dataloader["wc1c2"][dataloader_idx] = self.val_gbest_dataloader[
@@ -165,3 +179,5 @@ class PolicyGradientNaive(L.LightningModule):
                     prog_bar=True,
                 )
         self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}}
+
+        self.custom_logger.save_population_stats()

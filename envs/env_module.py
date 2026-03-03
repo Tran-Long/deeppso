@@ -102,3 +102,11 @@ class EnvDataModule(L.LightningDataModule):
             DataLoader(dataset, batch_size=4, collate_fn=list_collate_fn)
             for dataset in self.val_datasets
         ]
+
+    def get_hparams_dict(self):
+        return {
+            "problem_cls": self.problem_cls.__name__,
+            "n_particles": self.n_particles,
+            "training_cfg": self.training_cfg,
+            "validation_cfg": self.validation_cfg,
+        }

@@ -1,8 +1,10 @@
 import pytorch_lightning as L
 import torch
 import yaml
+from lightning.pytorch import loggers as pl_loggers
 
 from envs import EnvDataModule
+from logger import CustomLogger
 from pl_raw import PolicyGradientNaive
 from rl_agents import TSPAgent
 
@@ -52,17 +54,31 @@ if __name__ == "__main__":
     config = yaml.load(open(args.config, "r"), Loader=yaml.FullLoader)
 
     # Start training
+    tensorboard_logger = pl_loggers.TensorBoardLogger(
+        **config["log"],
+    )
+    custom_logger = CustomLogger(log_folder=tensorboard_logger.log_dir)
     trainer = L.Trainer(
         **config["trainer"],
         callbacks=[GradientNormLogger()],
+        logger=tensorboard_logger,
     )
     # decide device for data module from trainer
     device = trainer.accelerator.name() if trainer.accelerator else "cpu"
 
     env_module = EnvDataModule(**config["env"], device=device)
     rl_agent = init_module(config["rl_agent"])
-    rl_train = init_module(config["rl_train"], agent=rl_agent)
-    
-    rl_train.val_dataloader_idx2name = env_module.val_dataloader_idx2name  # For logging purposes
-    
+    rl_train = init_module(config["rl_train"], agent=rl_agent, custom_logger=custom_logger)
+
+    rl_train.val_dataloader_idx2name = (
+        env_module.val_dataloader_idx2name
+    )  # For logging purposes
+
+    hparams_dict = {
+        "env": env_module.get_hparams_dict(),
+        "rl_agent": config["rl_agent"],
+        "rl_train": config["rl_train"],
+        "trainer": config["trainer"],
+    }
+    custom_logger.log_hparams(hparams_dict)
     trainer.fit(rl_train, env_module)
