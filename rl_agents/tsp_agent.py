@@ -6,7 +6,6 @@ from envs.problems import TSPProblem
 from .base import BaseAgent
 from .nets import TSPActorNet
 
-
 class TSPAgent(BaseAgent):
     def __init__(
         self,

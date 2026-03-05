@@ -20,38 +20,38 @@ env:
 
   # Problem general specific settings
   n_dims: 2
-  eval_n_starts: 5
+  eval_n_starts: 0.1
   init_n_heuristic: 0
 
   training_cfg:
     batch_size: 1
-    n_cities: [20, 100]
-    k_sparse: [5, 10]
+    n_cities: 100
+    k_sparse: 20
     mode: "choice" # "range" or "choice"
-    steps_per_epoch: 32
+    steps_per_epoch: 64
   
   validation_cfg:
     batch_size: 4
-    n_cities: [20, 100]
-    k_sparse: [5, 10]
+    n_cities: 100
+    k_sparse: 20
     mode: "choice"
     random_include: False
-    random_size: 10
+    random_size: 100
 
 rl_agent:
   name: "TSPAgent"
   args:
-    emb_dim: 32
+    emb_dim: 64
     act_fn: "silu"
 
 rl_train:
   name: "PolicyGradientNaive"
   args:
-    pso_iterations_train: 3
-    pso_iterations_infer: 6
+    pso_iterations_train: 32
+    pso_iterations_infer: 64
 
 trainer:
-  max_epochs: 5
+  max_epochs: 10
   val_check_interval: 1.0
   accelerator: "auto"
   devices: "auto"
@@ -61,4 +61,4 @@ trainer:
 log:
   save_dir: "./logs"
   name: "tsp"
-  version: "v20_100"
+  version: "timeit_100"

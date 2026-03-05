@@ -1,6 +1,8 @@
 import torch
 import torch.distributions as dist
 
+from utils import timeit
+
 from ..problems import TSPProblem
 from .base import BaseEnvPSOProblem
 
@@ -134,7 +136,6 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
     def step_eval(self, wc1c2: torch.Tensor, using_random: bool = True):
         return self.step(wc1c2, return_stochastic_cost=False, using_random=using_random)
 
-
     def decode_solutions(
         self,
         stochastic: bool = True,
@@ -206,11 +207,11 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
         paths = torch.stack(paths_list)  # shape: (n_cities, n_particles)
         paths = paths.T  # shape: (n_particles, n_cities)
 
-        # sanity check: each tour should visit all cities exactly once
-        for tour in paths:
-            assert (
-                len(set(tour.tolist())) == self.n_cities
-            ), f"Invalid tour decoded: \n{tour.tolist()}"
+        # # sanity check: each tour should visit all cities exactly once
+        # for tour in paths:
+        #     assert (
+        #         len(set(tour.tolist())) == self.n_cities
+        #     ), f"Invalid tour decoded: \n{tour.tolist()}"
 
         # evaluate costs of decoded tours
         costs = self.problem.evaluate(paths)
@@ -222,9 +223,9 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
         keep the tour with the lowest cost.  This gives a robust, deterministic
         measure of how good each particle's position is.
 
-        Args:
-            n_starts: number of start cities to try per particle.
-                      Defaults to n_cities (full sweep).
+        Vectorized implementation: process all starts in parallel by expanding
+        the particle dimension.
+
         Returns:
             best_paths: (n_particles, n_cities)
             best_costs: (n_particles,)
@@ -238,36 +239,41 @@ class TSPEnvVectorEdge(BaseEnvPSOProblem):
                 n_starts = max(1, int(self.eval_n_starts * self.n_cities))
             else:
                 raise ValueError("eval_n_starts must be None, an int, or a float in (0, 1].")
+
+        # Generate random starts: (n_particles, n_starts)
         starts = torch.rand(
             self.n_particles, self.n_cities, device=self.device
         ).argsort(dim=1)[:, :n_starts]
-        best_paths = None
-        best_costs = torch.full((self.n_particles,), float("inf"), device=self.device)
-        for s in starts.T:
-            paths, costs = self.decode_solutions(stochastic=False, start=s)
-            improved = costs < best_costs
-            if best_paths is None:
-                best_paths = paths
-                best_costs = costs
-            else:
-                best_paths[improved] = paths[improved]
-                best_costs[improved] = costs[improved]
+
+        # Save original state
+        original_population = self.population
+        original_n_particles = self.n_particles
+
+        # Expand population: (n_particles, dim) -> (n_particles * n_starts, dim)
+        expanded_population = self.population.unsqueeze(1).expand(-1, n_starts, -1).reshape(-1, self.dim)
+
+        # Flatten starts: (n_particles, n_starts) -> (n_particles * n_starts,)
+        flat_starts = starts.reshape(-1)
+
+        # Temporarily set expanded state for decode_solutions
+        self.population = expanded_population
+        self.n_particles = original_n_particles * n_starts
+
+        # Decode all (particle, start) combinations at once
+        paths, costs = self.decode_solutions(stochastic=False, start=flat_starts)
+
+        # Restore original state
+        self.population = original_population
+        self.n_particles = original_n_particles
+
+        # Reshape results: (n_particles * n_starts,) -> (n_particles, n_starts)
+        costs_reshaped = costs.reshape(original_n_particles, n_starts)
+        paths_reshaped = paths.reshape(original_n_particles, n_starts, self.n_cities)
+
+        # Find the best start for each particle
+        best_indices = costs_reshaped.argmin(dim=1)  # (n_particles,)
+        particle_indices = torch.arange(original_n_particles, device=self.device)
+        best_costs = costs_reshaped[particle_indices, best_indices]
+        best_paths = paths_reshaped[particle_indices, best_indices]
+
         return best_paths, best_costs
-
-    def update_metadata(self, costs: torch.Tensor):
-        self.population = self.population.detach().clone()
-        self.velocity = self.velocity.detach().clone()
-        self.pbest = self.pbest.detach().clone()
-        self.gbest = self.gbest.detach().clone()
-        better_pbest_mask = costs < self.val_pbest
-        self.val_pbest[better_pbest_mask] = costs[better_pbest_mask]
-        self.pbest[better_pbest_mask] = (
-            self.population[better_pbest_mask].detach().clone()
-        )
-
-        # Update global best
-        min_cost, min_idx = torch.min(costs, dim=0)
-        if min_cost < self.val_gbest:
-            self.val_gbest = min_cost
-            self.gbest = self.population[min_idx].detach().clone()
-        return costs

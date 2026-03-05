@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from envs import BaseEnvPSOProblem
 from logger import CustomLogger
 from rl_agents import TSPAgent 
-
+from utils import timeit
 
 class PolicyGradientNaive(L.LightningModule):
     def __init__(
@@ -38,12 +38,12 @@ class PolicyGradientNaive(L.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.agent.parameters(), lr=3e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=100, eta_min=1e-5
-        )
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #     optimizer, T_max=100, eta_min=1e-5
+        # )
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
+            # "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
         }
 
     def training_step(self, env: BaseEnvPSOProblem, idx):
@@ -162,6 +162,7 @@ class PolicyGradientNaive(L.LightningModule):
                     idx * len(envs) + i,
                     pso_idx,
                     info["population_costs"],
+                    info["gbest_cost"],
                 )
 
         self.val_gbest_dataloader["wc1c2"][dataloader_idx] = self.val_gbest_dataloader[

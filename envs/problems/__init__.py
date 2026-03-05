@@ -1,2 +1,2 @@
 from .base import BaseProblem
-from .tsp import TSPProblem
+from .tsp import TSPProblem, TSPBatchProblem

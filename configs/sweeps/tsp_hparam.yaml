@@ -28,10 +28,10 @@ hydra:
   sweeper:
     params:
       # Embedding dimension of the agent network
-      rl_agent.args.emb_dim: 32,64
+      rl_agent.args.emb_dim: 64,128
 
-      # Activation function
-      rl_agent.args.act_fn: silu,gelu
+      # PSO iterations during training
+      rl_train.args.pso_iterations_train: 32, 64
 
-      # # PSO iterations during training
-      # rl_train.args.pso_iterations_train: 16,32
+      # PSO iterations during inference (evaluation)
+      rl_train.args.pso_iterations_infer: 128, 256

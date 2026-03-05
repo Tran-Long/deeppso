@@ -4,7 +4,7 @@ from typing import Optional
 from .base import BaseProblem
 import torch
 from pathlib import Path
-from torch_geometric.data import Data
+from torch_geometric.data import Data, Batch
 
 def get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode) -> dict[int, int]:
     if isinstance(n_cities, int):
@@ -126,3 +126,73 @@ class TSPProblem(BaseProblem):
         for name, datasets in val_datasets_dict.items():
             print(f"    - {name}: {len(datasets)} instances")
         return val_datasets_dict
+
+class TSPBatchProblem(TSPProblem):
+    def __init__(self, n_cities, k_sparse, batch_size, n_dims=2, mode="range", device="cpu", **kwargs):
+        self.batch_size = batch_size
+        self.n_cities_k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
+        self.n_cities = random.choice(list(self.n_cities_k_sparse_mapping.keys()))
+        self.k_sparse = self.n_cities_k_sparse_mapping[self.n_cities]
+        self.n_dims = n_dims
+        self.device = device
+
+        self.coordinates = torch.rand(self.batch_size, self.n_cities, n_dims, device=self.device)
+        self.distance_matrix = torch.norm(self.coordinates[:, :, None] - self.coordinates[:, None, :], dim=3, p=2)
+        self.distance_matrix[torch.arange(self.batch_size)[:, None], torch.arange(self.n_cities), torch.arange(self.n_cities)] = 1e9  # Prevent zero distance to self
+
+    @cached_property
+    def pyg_data(self):
+        batch_size, n_cities, _ = self.coordinates.shape
+        topk_values, topk_indices = torch.topk(self.distance_matrix, 
+                                            k=self.k_sparse, 
+                                            dim=2, largest=False)
+
+        # Vectorized edge_index construction
+        # Source nodes: repeat [0,1,...,n_cities-1] k_sparse times for each batch
+        src = torch.arange(n_cities, device=self.coordinates.device).unsqueeze(1).expand(-1, self.k_sparse).reshape(-1)
+        src = src.unsqueeze(0).expand(batch_size, -1)  # (batch_size, n_cities * k_sparse)
+        # Destination nodes: flatten topk_indices
+        dst = topk_indices.reshape(batch_size, -1)  # (batch_size, n_cities * k_sparse)
+
+        # Add batch offsets to create a single batched graph
+        batch_offsets = torch.arange(batch_size, device=self.coordinates.device) * n_cities
+        src_batched = (src + batch_offsets[:, None]).reshape(-1)
+        dst_batched = (dst + batch_offsets[:, None]).reshape(-1)
+        edge_index = torch.stack([src_batched, dst_batched])
+        # Flatten node features and edge attributes
+        x_batched = self.coordinates.reshape(-1, self.coordinates.size(-1))  # (batch_size * n_cities, n_dims)
+        edge_attr_batched = topk_values.reshape(-1, 1)  # (batch_size * n_cities * k_sparse, 1)
+
+        # Create batch assignment tensor for PyG
+        batch_tensor = torch.arange(batch_size, device=self.coordinates.device).repeat_interleave(n_cities)
+
+        # Create a single Batch object directly
+        batch = Batch(x=x_batched, edge_index=edge_index, edge_attr=edge_attr_batched, batch=batch_tensor)
+        return batch
+
+    def evaluate(self, solutions: torch.Tensor):
+        '''
+        Args:
+            solutions: torch tensor with shape (batch_size, n_particles, n_cities), each row is a permutation of node indices
+        Returns:
+            costs: torch tensor with shape (batch_size, n_particles), cost of each solution
+        '''
+        batch_size, n_particles, n_cities = solutions.shape
+        u = solutions  # shape: (batch_size, n_particles, n_cities)
+        v = torch.roll(u, shifts=-1, dims=2)  # shape: (batch_size, n_particles, n_cities)
+        batch_indices = torch.arange(batch_size, device=solutions.device).unsqueeze(1).unsqueeze(2).expand(-1, n_particles, -1)
+        assert (self.distance_matrix[batch_indices, u, v] > 0).all()
+        return torch.sum(self.distance_matrix[batch_indices, u, v], dim=2)
+
+    @classmethod
+    def from_list_single_problems(cls, problems: list[TSPProblem]):
+        batch_size = len(problems)
+        n_cities = problems[0].n_cities
+        k_sparse = problems[0].k_sparse
+        n_dims = problems[0].n_dims
+        device = problems[0].device
+        batch_problem = cls(n_cities=n_cities, k_sparse=k_sparse, batch_size=batch_size, n_dims=n_dims, device=device)
+        batch_problem.coordinates = torch.stack([p.coordinates for p in problems], dim=0)
+        batch_problem.distance_matrix = torch.norm(batch_problem.coordinates[:, :, None] - batch_problem.coordinates[:, None, :], dim=3, p=2)
+        batch_problem.distance_matrix[torch.arange(batch_size)[:, None], torch.arange(n_cities), torch.arange(n_cities)] = 1e9
+        return batch_problem
