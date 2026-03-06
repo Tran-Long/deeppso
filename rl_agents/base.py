@@ -10,7 +10,7 @@ class BaseAgent(nn.Module):
             obs (tuple[Tensor, Tensor, Tensor, Tensor, BaseProblem, Tensor]): (population, velocity, pbest, gbest, problem, problem_embedding)
 
         Returns:
-            wc1c2 (Tensor): shape based on problem-specific solution representation, e.g. (n_particles, dim, 3) for TSP
+            wc1c2 (Tensor): shape based on problem-specific solution representation, e.g. (B, n_particles, dim, 3) for TSP
             log_probs (Tensor | None): log probabilities of the actions, for policy gradient methods
             entropy (Tensor | None): entropy of the action distribution, for policy gradient methods
             

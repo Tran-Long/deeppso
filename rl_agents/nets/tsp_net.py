@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from envs import TSPProblem
+from envs import TSPBatchProblem
 
 from .model import *
 
@@ -58,7 +58,7 @@ class TSPActorNet(nn.Module):
         )
         self.sigmoid = nn.Sigmoid()
 
-    def get_problem_embedding(self, tsp_problem: TSPProblem):
+    def get_problem_embedding(self, tsp_problem: TSPBatchProblem):
         """Use to cache the TSP embedding since it doesn't change during PSO iterations."""
 
         # Pre-compute TSP graph embedding once per problem instance.
@@ -68,11 +68,15 @@ class TSPActorNet(nn.Module):
         # Computed WITH gradients so the GNN receives gradient signal.
         # Its graph is freed in the single backward call below, not per-iteration.
 
-        pyg_data = tsp_problem.pyg_data.to(self.device)
-        tsp_embedding = self.tsp_emb(
+        pyg_data = tsp_problem.pyg_data
+        batched_tsp_embedding = self.tsp_emb(
             pyg_data.x, pyg_data.edge_index, pyg_data.edge_attr
-        )  # (dim, emb_dim)
-        return tsp_embedding
+        )  # (dim, emb_dim) dim - batched number of edges
+        
+        batched_tsp_embedding = batched_tsp_embedding.view(
+            tsp_problem.batch_size, tsp_problem.n_cities * tsp_problem.k_sparse, self.emb_dim
+        )  # (B, dim, emb_dim)
+        return batched_tsp_embedding
 
     def forward(
         self,
@@ -80,25 +84,25 @@ class TSPActorNet(nn.Module):
         vel: torch.Tensor,
         pbest: torch.Tensor,
         gbest: torch.Tensor,
-        problem: TSPProblem,
+        problem: TSPBatchProblem,
         problem_embedding: torch.Tensor = None,
     ):
         """
         Args:
-            pos, vel, pbest: (n_particles, dim)
-            gbest: (dim,)
-            problem: TSPProblem object (used when problem_embedding is None)
-            problem_embedding: pre-computed (dim, emb_dim) — full per-edge embeddings
+            pos, vel, pbest: (batch_size, n_particles, dim)
+            gbest: (batch_size, dim)
+            problem: TSPBatchProblem object (used when problem_embedding is None)
+            problem_embedding: pre-computed (batch_size, dim, emb_dim) — full per-edge embeddings
         Returns:
             wc1c2_mu:    (n_particles, dim, 3)
             wc1c2_sigma: (n_particles, dim, 3)
         """
-        n_particles, dim = pos.shape
+        batch_size, n_particles, dim = pos.shape
 
         # --- 1. Particle & gbest embeddings (global summaries) ---
         particle_embeddings, gbest_embedding = self.swarm_emb(
             pos, vel, pbest, gbest, k_sparse=problem.k_sparse
-        )  # (n_particles, D), (1, D)
+        )  # (batch_size, n_particles, D), (batch_size, 1, D)
 
         # --- 2. Per-edge TSP embedding ---
         if problem_embedding is None:
@@ -108,45 +112,41 @@ class TSPActorNet(nn.Module):
 
         # --- 3. Cross-attention ---
         # Context: [edge_embs(dim, D), gbest(1, D), swarm_mean(1, D)]
-        swarm_mean = particle_embeddings.mean(dim=0, keepdim=True)  # (1, D)
+        swarm_mean = particle_embeddings.mean(dim=1, keepdim=True)  # (batch_size, 1, D)
         context = torch.cat(
             [
-                tsp_embedding + self.edge_type_emb,  # (dim, D)
-                gbest_embedding + self.gbest_type_emb,  # (1, D)
-                swarm_mean + self.swarm_type_emb,  # (1, D)
+                tsp_embedding + self.edge_type_emb,  # (batch_size, dim, D)
+                gbest_embedding + self.gbest_type_emb,  # (batch_size, 1, D)
+                swarm_mean + self.swarm_type_emb,  # (batch_size, 1, D)
             ],
-            dim=0,
-        )  # (dim+2, D)
-
+            dim=1,
+        )  # (batch_size, dim+2, D)
         attn_output, _ = self.cross_attention(
-            query=particle_embeddings.unsqueeze(0),  # (1, n_particles, D)
-            key=context.unsqueeze(0),  # (1, dim+2, D)
-            value=context.unsqueeze(0),  # (1, dim+2, D)
-        )  # (1, n_particles, D)
-        attn_output = attn_output.squeeze(0)  # (n_particles, D)
+            query=particle_embeddings,  # (batch_size, n_particles, D)
+            key=context,  # (batch_size, dim+2, D)
+            value=context,  # (batch_size, dim+2, D)
+        )  # (batch_size, n_particles, D)
         particle_ctx = self.layer_norm_attn(
             attn_output + particle_embeddings
-        )  # (n_particles, D)
-
+        )  # (batch_size, n_particles, D)
         # --- 4. Per-edge feature assembly ---
         # Local PSO scalars per edge: (n_particles, dim, 4)
         local_feats = torch.stack(
-            [pos, vel, pbest, gbest.unsqueeze(0).expand_as(pos)], dim=-1
+            [pos, vel, pbest, gbest.unsqueeze(-2).expand_as(pos)], dim=-1
         )
-        # (n_particles, dim, 4)
-
+        # (batch_size, n_particles, dim, 4)
         # Broadcast embeddings to every edge:
-        # tsp_embedding: (dim, D) → (n_particles, dim, D)
-        edge_emb_expanded = tsp_embedding.unsqueeze(0).expand(n_particles, -1, -1)
-        # particle_ctx: (n_particles, D) → (n_particles, dim, D)
-        ctx_expanded = particle_ctx.unsqueeze(1).expand(-1, dim, -1)
+        # tsp_embedding: (batch_size, dim, D) → (batch_size, n_particles, dim, D)
+        edge_emb_expanded = tsp_embedding.unsqueeze(1).expand(-1, n_particles, -1, -1)
+        # particle_ctx: (batch_size, n_particles, D) → (batch_size, n_particles, dim, D)
+        ctx_expanded = particle_ctx.unsqueeze(2).expand(-1, -1, dim, -1)
 
-        # Concatenate: (n_particles, dim, 4 + 2*D)
+        # Concatenate: (batch_size, n_particles, dim, 4 + 2*D)
         edge_input = torch.cat([local_feats, edge_emb_expanded, ctx_expanded], dim=-1)
 
         # --- 5. Shared MLP → per-edge (w, c1, c2) ---
-        raw_mu = self.edge_head_mu(edge_input)  # (n_particles, dim, 3)
-        raw_sigma = self.edge_head_sigma(edge_input)  # (n_particles, dim, 3)
+        raw_mu = self.edge_head_mu(edge_input)  # (batch_size, n_particles, dim, 3)
+        raw_sigma = self.edge_head_sigma(edge_input)  # (batch_size, n_particles, dim, 3)
 
         # Bounded outputs
         w_mu = 0.4 + 0.5 * self.sigmoid(raw_mu[..., 0:1])  # [0.4, 0.9]
@@ -156,95 +156,8 @@ class TSPActorNet(nn.Module):
         c1_sig = 0.2 + 0.8 * self.sigmoid(raw_sigma[..., 1:2])  # [0.2, 1.0]
         c2_sig = 0.2 + 0.8 * self.sigmoid(raw_sigma[..., 2:3])  # [0.2, 1.0]
 
-        wc1c2_mu = torch.cat([w_mu, c1_mu, c2_mu], dim=-1)  # (n_particles, dim, 3)
+        wc1c2_mu = torch.cat([w_mu, c1_mu, c2_mu], dim=-1)  # (batch_size, n_particles, dim, 3)
         wc1c2_sigma = torch.cat(
             [w_sig, c1_sig, c2_sig], dim=-1
-        )  # (n_particles, dim, 3)
-        return wc1c2_mu, wc1c2_sigma
-
-    def forward_batch(
-        self,
-        pos: torch.Tensor,
-        vel: torch.Tensor,
-        pbest: torch.Tensor,
-        gbest: torch.Tensor,
-        k_sparse: int,
-        problem_embeddings: torch.Tensor,
-    ):
-        """Batched forward pass for parallel validation.
-
-        Args:
-            pos, vel, pbest: (B, n_particles, dim)
-            gbest: (B, dim)
-            k_sparse: int (same for all envs in batch)
-            problem_embeddings: (B, dim, emb_dim) — pre-computed GNN embeddings
-        Returns:
-            wc1c2_mu:    (B, n_particles, dim, 3)
-            wc1c2_sigma: (B, n_particles, dim, 3)
-        """
-        B, n_particles, dim = pos.shape
-
-        # --- 1. Particle & gbest embeddings (loop over batch — SwarmEncoder
-        #     uses k_sparse-aware pooling that doesn't trivially vectorise) ---
-        particle_embs = []
-        gbest_embs = []
-        for b in range(B):
-            pe, ge = self.swarm_emb(
-                pos[b], vel[b], pbest[b], gbest[b], k_sparse=k_sparse
-            )
-            particle_embs.append(pe)
-            gbest_embs.append(ge)
-        particle_embeddings = torch.stack(particle_embs)  # (B, n_particles, D)
-        gbest_embedding = torch.stack(gbest_embs)  # (B, 1, D)
-
-        # --- 2. Cross-attention (natively supports batch dim with batch_first=True) ---
-        swarm_mean = particle_embeddings.mean(dim=1, keepdim=True)  # (B, 1, D)
-        context = torch.cat(
-            [
-                problem_embeddings + self.edge_type_emb,  # (B, dim, D)
-                gbest_embedding + self.gbest_type_emb,  # (B, 1, D)
-                swarm_mean + self.swarm_type_emb,  # (B, 1, D)
-            ],
-            dim=1,
-        )  # (B, dim+2, D)
-
-        attn_output, _ = self.cross_attention(
-            query=particle_embeddings,  # (B, n_particles, D)
-            key=context,  # (B, dim+2, D)
-            value=context,  # (B, dim+2, D)
-        )  # (B, n_particles, D)
-        particle_ctx = self.layer_norm_attn(
-            attn_output + particle_embeddings
-        )  # (B, n_particles, D)
-
-        # --- 3. Per-edge feature assembly (all ops broadcast over B) ---
-        gbest_exp = gbest.unsqueeze(1).expand_as(pos)  # (B, n_particles, dim)
-        local_feats = torch.stack(
-            [pos, vel, pbest, gbest_exp], dim=-1
-        )  # (B, n_particles, dim, 4)
-
-        edge_emb_exp = problem_embeddings.unsqueeze(1).expand(
-            -1, n_particles, -1, -1
-        )  # (B, n_particles, dim, D)
-        ctx_exp = particle_ctx.unsqueeze(2).expand(
-            -1, -1, dim, -1
-        )  # (B, n_particles, dim, D)
-
-        edge_input = torch.cat(
-            [local_feats, edge_emb_exp, ctx_exp], dim=-1
-        )  # (B, n_particles, dim, 4+2D)
-
-        # --- 4. Shared MLP (supports arbitrary leading dims) ---
-        raw_mu = self.edge_head_mu(edge_input)
-        raw_sigma = self.edge_head_sigma(edge_input)
-
-        w_mu = 0.4 + 0.5 * self.sigmoid(raw_mu[..., 0:1])
-        c1_mu = 1.0 + 2.0 * self.sigmoid(raw_mu[..., 1:2])
-        c2_mu = 1.0 + 2.0 * self.sigmoid(raw_mu[..., 2:3])
-        w_sig = 0.1 + 0.3 * self.sigmoid(raw_sigma[..., 0:1])
-        c1_sig = 0.2 + 0.8 * self.sigmoid(raw_sigma[..., 1:2])
-        c2_sig = 0.2 + 0.8 * self.sigmoid(raw_sigma[..., 2:3])
-
-        wc1c2_mu = torch.cat([w_mu, c1_mu, c2_mu], dim=-1)
-        wc1c2_sigma = torch.cat([w_sig, c1_sig, c2_sig], dim=-1)
+        )  # (batch_size, n_particles, dim, 3)
         return wc1c2_mu, wc1c2_sigma

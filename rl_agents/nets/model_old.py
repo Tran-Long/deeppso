@@ -191,21 +191,21 @@ class ParticleVectorStem(nn.Module):
             # Graph-aware hierarchical pooling:
             # 1) pool edges per city (max) → per-city representation
             # 2) pool across cities (mean / mean+max)
-            batch, n_p, dim, emb = x.shape
+            n_p, dim, emb = x.shape
             n_cities = dim // k_sparse
-            x = x.view(batch, n_p, n_cities, k_sparse, emb)
-            x = x.max(dim=3).values  # (batch, n_p, n_cities, emb) — best edge per city
-            x_mean = x.mean(dim=2)  # (batch, n_p, emb)
+            x = x.view(n_p, n_cities, k_sparse, emb)
+            x = x.max(dim=2).values  # (n_p, n_cities, emb) — best edge per city
+            x_mean = x.mean(dim=1)  # (n_p, emb)
             if self.use_maxpool:
-                x_max = x.max(dim=2).values  # (batch, n_p, emb)
+                x_max = x.max(dim=1).values  # (n_p, emb)
                 x = self.pool_proj(torch.cat([x_mean, x_max], dim=-1))
             else:
                 x = x_mean
         else:
             # Flat pooling (fallback when k_sparse is unknown)
-            x_mean = x.mean(dim=2)  # (batch, n_p, emb)
+            x_mean = x.mean(dim=1)
             if self.use_maxpool:
-                x_max = x.max(dim=2).values
+                x_max = x.max(dim=1).values
                 x = self.pool_proj(torch.cat([x_mean, x_max], dim=-1))
             else:
                 x = x_mean
@@ -237,9 +237,19 @@ class SwarmEncoder(nn.Module):
         # self.gbest_type_embed = nn.Parameter(torch.randn(1, emb_dim))
 
     def forward(self, pos, vel, pbest, gbest, k_sparse=None):
-        h_particles = self.pop_stem(pos, vel, pbest, k_sparse=k_sparse)  # (batch_size, n_particles, D)
+        # h_particles = self.shared_stem(pos, vel, pbest) # (n_particles, D)
+        # h_gbest = self.shared_stem(
+        #     gbest.unsqueeze(0),
+        #     torch.zeros_like(gbest).unsqueeze(0),
+        #     gbest.unsqueeze(0)
+        # ) # (1, D)
+
+        # # Add role-specific "Identity"
+        # h_particles = h_particles + self.particle_type_embed
+        # h_gbest = h_gbest + self.gbest_type_embed
+        h_particles = self.pop_stem(pos, vel, pbest, k_sparse=k_sparse)  # (n_particles, D)
         h_gbest = self.gbest_stem(
-            gbest.unsqueeze(1),
+            gbest.unsqueeze(0),
             k_sparse=k_sparse,
         )  # (1, D)
 

@@ -4,10 +4,11 @@ import torch.distributions as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
-from envs import BaseEnvPSOProblem
+from envs import BaseEnvPSOBatchProblem
 from logger import CustomLogger
-from rl_agents import TSPAgent 
+from rl_agents import TSPAgent
 from utils import timeit
+
 
 class PolicyGradientNaive(L.LightningModule):
     def __init__(
@@ -46,13 +47,12 @@ class PolicyGradientNaive(L.LightningModule):
             # "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
         }
 
-    def training_step(self, env: BaseEnvPSOProblem, idx):
+    def training_step(self, env: BaseEnvPSOBatchProblem, idx):
         observations, _ = env.reset()
         self.log(
             "train_initial_gbest",
-            env.val_gbest,
+            env.val_gbest.mean(),
             prog_bar=True,
-            batch_size=1,
         )
 
         opt = self.optimizers()
@@ -80,14 +80,22 @@ class PolicyGradientNaive(L.LightningModule):
                 temperature=temperature,
                 using_random=self.pso_using_random,
             )
-            # Raw-cost reward with mean baseline
-            baseline = reward.mean()
-            reinforce_loss = -((reward - baseline) * log_probs).mean()
+            # REINFORCE with per-problem baseline
+            # Shapes: reward (B, P), log_probs (B, P), entropy (B, P)
+            #   - reward[b,p] = negative stochastic tour cost of particle p in problem b
+            #   - log_probs[b,p] = log π(action | state) for particle p, summed over 3 params, meaned over D edges
+            #   - baseline[b] = mean reward across particles in problem b
+            #   - advantage[b,p] = how much better/worse particle p did vs. swarm average
+            baseline = reward.mean(dim=-1, keepdim=True)  # (B, 1)
+            advantage = reward - baseline  # (B, P)
+            reinforce_loss = -(advantage * log_probs).mean()  # scalar: mean over B×P
 
-            loss = reinforce_loss - 0.01 * entropy
+            loss = reinforce_loss - 0.01 * entropy.mean()
             # Add to the live graph — backward is deferred until after the loop.
             total_loss = total_loss + loss
 
+        # Normalize by number of iterations so gradient scale is independent of T.
+        total_loss = total_loss / self.pso_iterations_train
         # Single backward + optimizer step after all PSO iterations.
         # tsp_embedding's graph is traversed exactly once here.
         self.manual_backward(total_loss)
@@ -97,77 +105,46 @@ class PolicyGradientNaive(L.LightningModule):
         opt.step()
         opt.zero_grad()
 
-        avg_loss = total_loss.detach() / self.pso_iterations_train
-        self.log("train_loss", avg_loss, prog_bar=True, batch_size=1)
+        avg_loss = total_loss.detach()
+        self.log("train_loss", avg_loss, prog_bar=True)
         self.log(
             "train_gbest",
-            env.val_gbest,
+            env.val_gbest.mean(),
             prog_bar=True,
-            batch_size=1,
         )
 
-    def validation_step(self, envs: list[BaseEnvPSOProblem], idx, dataloader_idx=0):
-        B = len(envs)
-
-        # 1. Reset all envs and collect observations
-        all_obs = []
-        initial_val_gbests = []
-        for env in envs:
-            obs, _ = env.reset()
-            all_obs.append(obs)  # (population, velocity, pbest, gbest, problem)
-            initial_val_gbests.append(env.val_gbest)
+    def validation_step(self, env: BaseEnvPSOBatchProblem, idx, dataloader_idx=0):
+        observations, _ = env.reset()
 
         self.val_gbest_dataloader["initial"][dataloader_idx] = (
             self.val_gbest_dataloader["initial"].get(dataloader_idx, [])
-            + initial_val_gbests
+            + env.val_gbest.tolist()
         )
 
-        # 2. Batch GNN embeddings (single forward pass for all graphs via PyG Batch)
-        problem_embeddings = self.agent.get_problem_embedding_batch(
-            [env.problem for env in envs]
-        )  # (B, dim, emb_dim)
+        # 2. GNN embeddings (single forward pass for all graphs via PyG Batch)
+        problem_embeddings = self.agent.get_problem_embedding(env.problem)  # (B, dim, emb_dim)
 
-        # 3. Batched PSO loop
-        k_sparse = envs[0].problem.k_sparse
+        # 3. PSO loop
         for pso_idx in range(self.pso_iterations_infer):
-            # Stack observations for batched forward pass
-            batch_pos = torch.stack(
-                [obs[0] for obs in all_obs]
-            )  # (B, n_particles, dim)
-            batch_vel = torch.stack(
-                [obs[1] for obs in all_obs]
-            )  # (B, n_particles, dim)
-            batch_pbest = torch.stack(
-                [obs[2] for obs in all_obs]
-            )  # (B, n_particles, dim)
-            batch_gbest = torch.stack([obs[3] for obs in all_obs])  # (B, dim)
+            wc1c2, _, _ = self.agent.get_action((*observations, problem_embeddings))
 
-            # Single batched forward pass → (B, n_particles, dim, 3)
-            batch_wc1c2 = self.agent.get_action_batch(
-                batch_pos,
-                batch_vel,
-                batch_pbest,
-                batch_gbest,
-                k_sparse,
-                problem_embeddings,
+            # Step the env and log population stats for this iteration
+            observations, _, _, _, info = env.step_eval(
+                wc1c2, using_random=self.pso_using_random
             )
-
-            # Step each env with its slice (env state update is per-env)
-            for i, env in enumerate(envs):
-                all_obs[i], _, _, _, info = env.step_eval(
-                    batch_wc1c2[i], using_random=self.pso_using_random
-                )
+            for i in range(env.batch_size):
                 self.custom_logger.log_population_stats(
                     self.val_dataloader_idx2name.get(dataloader_idx, dataloader_idx),
-                    idx * len(envs) + i,
+                    idx * env.batch_size + i,
                     pso_idx,
-                    info["population_costs"],
-                    info["gbest_cost"],
+                    info["population_costs"][i],
+                    info["gbest_cost"][i],
                 )
 
-        self.val_gbest_dataloader["wc1c2"][dataloader_idx] = self.val_gbest_dataloader[
-            "wc1c2"
-        ].get(dataloader_idx, []) + [env.val_gbest for env in envs]
+        self.val_gbest_dataloader["wc1c2"][dataloader_idx] = (
+            self.val_gbest_dataloader["wc1c2"].get(dataloader_idx, [])
+            + env.val_gbest.tolist()
+        )
 
     def on_validation_epoch_end(self):
         for key in self.val_gbest_dataloader.keys():

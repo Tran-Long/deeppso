@@ -4,35 +4,39 @@ from torch.utils.data import DataLoader
 from .problems import *
 from .pso import *
 
-MAPPING_PROBLEM_TO_PARTICLE = {
-    TSPProblem: TSPEnvVectorEdge,
+MAPPING_PROBLEM_TO_ENV = {
+    "tsp": (TSPBatchProblem, TSPEnvVectorEdgeBatch),
 }
-
 
 class ProblemDataset:
     def __init__(
         self,
         problem_cls: BaseProblem,
+        env_cls: BaseEnvPSOBatchProblem,
         n_particles,
         steps_per_epoch: int = 128,
         device="cpu",
+        batch_size=1, # default batch = 1 mean spawn a new problem instance at each step, not a batched problem
         **kwargs
     ):
         self.problem_cls = problem_cls
+        self.env_cls = env_cls
         self.n_particles = n_particles
         self.device = device
         self.kwargs = kwargs
         self.steps_per_epoch = steps_per_epoch
+        self.batch_size = batch_size
 
     def __len__(self):
         return self.steps_per_epoch
 
     def __getitem__(self, idx):
-        problem = self.problem_cls(device=self.device, **self.kwargs)
-        env_cls = MAPPING_PROBLEM_TO_PARTICLE[self.problem_cls]
-        return env_cls(
+        batch_problem = self.problem_cls(
+            device=self.device, batch_size=self.batch_size, **self.kwargs
+        )
+        return self.env_cls(
             n_particles=self.n_particles,
-            problem=problem,
+            problem=batch_problem,
             device=self.device,
             **self.kwargs,
         )
@@ -51,7 +55,7 @@ def list_collate_fn(batch):
 class EnvDataModule(L.LightningDataModule):
     def __init__(
         self,
-        problem_cls: str,
+        problem_sig: str,
         n_particles,
         training_cfg:dict,
         validation_cfg:dict,
@@ -63,10 +67,10 @@ class EnvDataModule(L.LightningDataModule):
         self.n_particles = n_particles
         self.training_cfg = training_cfg
         self.validation_cfg = validation_cfg
-        self.problem_cls: BaseProblem = eval(problem_cls)
-        env_cls = MAPPING_PROBLEM_TO_PARTICLE[self.problem_cls]
+        self.problem_cls, self.env_cls = MAPPING_PROBLEM_TO_ENV[problem_sig]
         self.train_dataset = ProblemDataset(
             self.problem_cls,
+            self.env_cls,
             n_particles=n_particles,
             device=device,
             **training_cfg,
@@ -77,7 +81,7 @@ class EnvDataModule(L.LightningDataModule):
         )
         self.val_datasets_dict = {
             name: [
-                env_cls(
+                self.env_cls(
                     n_particles=self.n_particles,
                     problem=problem,
                     device=self.device,
@@ -99,7 +103,7 @@ class EnvDataModule(L.LightningDataModule):
 
     def val_dataloader(self):
         return [
-            DataLoader(dataset, batch_size=4, collate_fn=list_collate_fn)
+            DataLoader(dataset, batch_size=1, collate_fn=single_collate_fn)
             for dataset in self.val_datasets
         ]
 
