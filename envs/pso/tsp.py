@@ -396,4 +396,3 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         ]  # (batch_size, n_particles, n_cities)
 
         return best_paths, best_costs
-        return best_paths, best_costs

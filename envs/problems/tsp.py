@@ -1,6 +1,8 @@
 from functools import cached_property
 import random
 from typing import Optional
+
+import numpy as np
 from .base import BaseProblem
 import torch
 from pathlib import Path
@@ -21,6 +23,12 @@ def get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode) -> dict[int, int]:
                 return {n: n for n in n_cities_list}
             elif isinstance(k_sparse, int):
                 return {n: k_sparse for n in n_cities_list}
+            elif isinstance(k_sparse, list):
+                if len(k_sparse) == 2:
+                    offset = (k_sparse[1] - k_sparse[0]) / (n_cities[1] - n_cities[0])
+                    return {n: int(k_sparse[0] + offset * (n - n_cities[0])) for n in n_cities_list}
+                elif len(k_sparse) == len(n_cities_list):
+                    return dict(zip(n_cities_list, k_sparse))
             else:
                 raise ValueError("k_sparse should be an integer or None in 'range' mode.")
         elif mode == "choice":
@@ -157,6 +165,7 @@ class TSPBatchProblem(BaseProblem):
     def get_val_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", random_include=True, random_size=100, n_dims=2, device="cpu", **kwargs) -> dict[str, list]:
         val_datasets_dict = {}
         n_cities2k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
+        print(f">>> n_cities to k_sparse mapping for TSP validation datasets: {n_cities2k_sparse_mapping}")
         all_n_cities = list(set(n_cities2k_sparse_mapping.keys()))
         if n_dims == 2:
             val_files = Path(cls.VAL_DATA_FOLDER).glob('valDataset-*.pt')
@@ -173,6 +182,29 @@ class TSPBatchProblem(BaseProblem):
                     problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_size, mode=mode, n_dims=n_dims, device=device)
                     problem_instance.set_coordinates(batch_coordinates)
                     val_datasets_dict[f"{n_cities_file}_file"].append(problem_instance)
+            
+            test_files = Path(cls.VAL_DATA_FOLDER).glob('tsp*.txt')
+            for test_file in test_files:
+                n_cities_file = int(test_file.stem.split('_')[0][3:])  # Extract n_cities from filename like 'tsp100_*.txt'
+                if n_cities_file not in all_n_cities:
+                    continue
+                k_sparse_file = n_cities2k_sparse_mapping.get(n_cities_file, n_cities_file)
+                val_datasets_dict[f"{n_cities_file}_file_test"] = []
+                with open(test_file, 'r') as f:
+                    lines = f.readlines()
+                    for i in range(0, len(lines), batch_size):
+                        batch_coordinates = []
+                        for line in lines[i:i+batch_size]:
+                            derivate = line.split(' ')
+                            coords = torch.tensor(
+                                np.array(derivate[0:2*n_cities_file], dtype = np.float64).reshape(n_cities_file, 2)
+                            )
+                            batch_coordinates.append(coords)
+                        batch_coordinates = torch.stack(batch_coordinates).to(device)
+                        problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_size, mode=mode, n_dims=n_dims, device=device)
+                        problem_instance.set_coordinates(batch_coordinates)
+                        val_datasets_dict[f"{n_cities_file}_file_test"].append(problem_instance)
+
         need_random = []
         for n_ct in all_n_cities:
             if f"{n_ct}_file" not in val_datasets_dict:
