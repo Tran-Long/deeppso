@@ -198,7 +198,7 @@ class TSPBatchProblem(BaseProblem):
                             derivate = line.split(' ')
                             coords = torch.tensor(
                                 np.array(derivate[0:2*n_cities_file], dtype = np.float64).reshape(n_cities_file, 2)
-                            )
+                            ).float()
                             batch_coordinates.append(coords)
                         batch_coordinates = torch.stack(batch_coordinates).to(device)
                         problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_size, mode=mode, n_dims=n_dims, device=device)

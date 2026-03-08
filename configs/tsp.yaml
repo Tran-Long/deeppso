@@ -27,13 +27,13 @@ env:
     batch_size: 2
     n_cities: [20, 100]
     k_sparse: [5, 20]
-    mode: "choice" # "range" or "choice"
-    steps_per_epoch: 64
+    mode: "range" # "range" or "choice"
+    steps_per_epoch: 256
   
   validation_cfg:
     batch_size: 4
-    n_cities: [20, 100]
-    k_sparse: [5, 20]
+    n_cities: [20, 50, 100]
+    k_sparse: [5, 10, 20]
     mode: "choice"
     random_include: False
     random_size: 100
@@ -41,17 +41,17 @@ env:
 rl_agent:
   name: "TSPAgent"
   args:
-    emb_dim: 64
+    emb_dim: 32
     act_fn: "silu"
 
 rl_train:
   name: "PolicyGradientNaive"
   args:
-    pso_iterations_train: 32
-    pso_iterations_infer: 64
+    pso_iterations_train: 64
+    pso_iterations_infer: 128
 
 trainer:
-  max_epochs: 10
+  max_epochs: 50
   val_check_interval: 1.0
   accelerator: "auto"
   devices: "auto"
@@ -61,4 +61,4 @@ trainer:
 log:
   save_dir: "./logs"
   name: "tsp"
-  version: "test"
+  version: "range_test"
