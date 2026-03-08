@@ -3,6 +3,7 @@ import pytorch_lightning as L
 import torch
 from lightning.pytorch import loggers as pl_loggers
 from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning.callbacks.progress.tqdm_progress import Tqdm
 
 from envs import EnvDataModule
 from logger import CustomLogger
@@ -49,6 +50,38 @@ class GradientNormLogger(L.Callback):
             )
 
 
+class PeriodicTestCallback(L.Callback):
+    def __init__(self, run_every_n_epochs=5):
+        self.run_every_n_epochs = run_every_n_epochs
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        # Check if it's the right epoch
+        if (trainer.current_epoch + 1) % self.run_every_n_epochs == 0:
+            # Avoid calling trainer.test() here — it resets trainer._results to None,
+            # which breaks the training loop's logger connector assertion that follows.
+            # Instead, manually run test_step + on_test_epoch_end without touching trainer state.
+            was_training = pl_module.training
+            pl_module.eval()
+            with torch.no_grad():
+                test_dataloaders = trainer.datamodule.test_dataloader()
+                for dataloader_idx, dataloader in enumerate(test_dataloaders):
+                    pbar = Tqdm(
+                        desc=f"Testing (dl={dataloader_idx})",
+                        total=len(dataloader),
+                        leave=False,
+                        dynamic_ncols=True,
+                    )
+                    for batch_idx, batch in enumerate(dataloader):
+                        pl_module.test_step(
+                            batch, batch_idx, dataloader_idx=dataloader_idx
+                        )
+                        pbar.update()
+                    pbar.close()
+            pl_module.on_test_epoch_end()
+            if was_training:
+                pl_module.train()
+
+
 @hydra.main(config_path="configs", config_name="tsp", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # Convert OmegaConf to plain dict so downstream code stays unchanged
@@ -59,14 +92,23 @@ def main(cfg: DictConfig) -> None:
         **config["log"],
     )
     custom_logger = CustomLogger(log_folder=tensorboard_logger.log_dir)
+    callbacks = [GradientNormLogger()]
+    enable_test = config["env"]["test_cfg"].get("enable", False)
+    if enable_test:
+        callbacks.append(PeriodicTestCallback())
     trainer = L.Trainer(
         **config["trainer"],
-        callbacks=[GradientNormLogger()],
+        callbacks=callbacks,
         logger=tensorboard_logger,
     )
     # decide device for data module from trainer
     device = trainer.accelerator.name() if trainer.accelerator else "cpu"
-
+    if device == "cuda":
+        assert (
+            len(trainer.device_ids) == 1
+        ), "Multiple devices not supported for data module initialization yet."
+        device = f"{device}:{trainer.device_ids[0]}" if trainer.device_ids else device
+        print(device)
     env_module = EnvDataModule(**config["env"], device=device)
     rl_agent = init_module(config["rl_agent"])
     rl_train = init_module(
@@ -76,7 +118,10 @@ def main(cfg: DictConfig) -> None:
     rl_train.val_dataloader_idx2name = (
         env_module.val_dataloader_idx2name
     )  # For logging purposes
-
+    if enable_test:
+        rl_train.test_dataloader_idx2name = (
+            env_module.test_dataloader_idx2name
+        )  # For logging purposes
     hparams_dict = {
         "env": env_module.get_hparams_dict(),
         "rl_agent": config["rl_agent"],

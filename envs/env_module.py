@@ -59,6 +59,7 @@ class EnvDataModule(L.LightningDataModule):
         n_particles,
         training_cfg:dict,
         validation_cfg:dict,
+        test_cfg:dict,
         device="cpu",
         **kwargs
     ):
@@ -67,6 +68,7 @@ class EnvDataModule(L.LightningDataModule):
         self.n_particles = n_particles
         self.training_cfg = training_cfg
         self.validation_cfg = validation_cfg
+        self.test_cfg = test_cfg
         self.problem_cls, self.env_cls = MAPPING_PROBLEM_TO_ENV[problem_sig]
         self.train_dataset = ProblemDataset(
             self.problem_cls,
@@ -76,6 +78,8 @@ class EnvDataModule(L.LightningDataModule):
             **training_cfg,
             **kwargs,
         )
+
+        # Prepare validation datasets
         self.val_problems_dict = self.problem_cls.get_val_instances(
             device=device, **validation_cfg, **kwargs
         )
@@ -95,6 +99,33 @@ class EnvDataModule(L.LightningDataModule):
         self.val_datasets = list(self.val_datasets_dict.values())
         self.val_dataloader_idx2name = {idx: name for idx, name in enumerate(self.val_datasets_dict.keys())}
 
+        # Prepare test datasets if needed. Procedure is the same as validation
+        if test_cfg.pop("enable", False):
+            self.test_problems_dict = self.problem_cls.get_test_instances(
+                device=device, **test_cfg, **kwargs
+            )
+            self.test_datasets_dict = {
+                name: [
+                    self.env_cls(
+                        n_particles=self.n_particles,
+                        problem=problem,
+                        device=self.device,
+                        **kwargs,
+                    )
+                    for problem in problems
+                ]
+                for name, problems in self.test_problems_dict.items()
+            }
+            self.test_dataset_name = list(self.test_datasets_dict.keys())
+            self.test_datasets = list(self.test_datasets_dict.values())
+            self.test_dataloader_idx2name = {idx: name for idx, name in enumerate(self.test_datasets_dict.keys())}
+        else:
+            self.test_problems_dict = {}
+            self.test_datasets_dict = {}
+            self.test_dataset_name = []
+            self.test_datasets = []
+            self.test_dataloader_idx2name = {}
+
     def train_dataloader(self):
         # Return a dataloader that yields the same dataset instance repeatedly
         return DataLoader(
@@ -106,6 +137,13 @@ class EnvDataModule(L.LightningDataModule):
             DataLoader(dataset, batch_size=1, collate_fn=single_collate_fn)
             for dataset in self.val_datasets
         ]
+    
+    def test_dataloader(self):
+        # For simplicity, we use the same validation datasets for testing. You can modify this to use separate test datasets if needed.
+        return [
+            DataLoader(dataset, batch_size=1, collate_fn=single_collate_fn)
+            for dataset in self.test_datasets
+        ]
 
     def get_hparams_dict(self):
         return {
@@ -113,4 +151,5 @@ class EnvDataModule(L.LightningDataModule):
             "n_particles": self.n_particles,
             "training_cfg": self.training_cfg,
             "validation_cfg": self.validation_cfg,
+            "test_cfg": self.test_cfg,
         }

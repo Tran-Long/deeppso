@@ -37,6 +37,15 @@ env:
     mode: "choice"
     random_include: False
     random_size: 100
+    
+  test_cfg:
+    enable: True
+    batch_size: 4
+    n_cities: [20, 50, 100]
+    k_sparse: [5, 10, 20]
+    mode: "choice"
+    random_include: False
+    random_size: 1280
 
 rl_agent:
   name: "TSPAgent"
@@ -54,7 +63,7 @@ trainer:
   max_epochs: 50
   val_check_interval: 1.0
   accelerator: "auto"
-  devices: "auto"
+  devices: [3]
   num_sanity_val_steps: 0
   log_every_n_steps: 16
 

@@ -1,8 +1,5 @@
 import pytorch_lightning as L
 import torch
-import torch.distributions as dist
-import torch.nn as nn
-import torch.nn.functional as F
 
 from envs import BaseEnvPSOBatchProblem
 from logger import CustomLogger
@@ -36,6 +33,8 @@ class PolicyGradientNaive(L.LightningModule):
         self.val_dataloader_idx2name = (
             {}
         )  # To be set by EnvDataModule for logging purposes
+        self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}}
+        self.test_dataloader_idx2name = {}  # To be set by EnvDataModule for logging purposes
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.agent.parameters(), lr=3e-4)
@@ -49,12 +48,6 @@ class PolicyGradientNaive(L.LightningModule):
 
     def training_step(self, env: BaseEnvPSOBatchProblem, idx):
         observations, _ = env.reset()
-        self.log(
-            "train_initial_gbest",
-            env.val_gbest.mean(),
-            prog_bar=True,
-        )
-
         opt = self.optimizers()
         opt.zero_grad()
         # Pre-compute TSP graph embedding once per problem instance.
@@ -106,11 +99,10 @@ class PolicyGradientNaive(L.LightningModule):
         opt.zero_grad()
 
         avg_loss = total_loss.detach()
-        self.log("train_loss", avg_loss, prog_bar=True)
+        self.log("train_loss", avg_loss)
         self.log(
             "train_gbest",
             env.val_gbest.mean(),
-            prog_bar=True,
         )
 
     def validation_step(self, env: BaseEnvPSOBatchProblem, idx, dataloader_idx=0):
@@ -132,14 +124,14 @@ class PolicyGradientNaive(L.LightningModule):
             observations, _, _, _, info = env.step_eval(
                 wc1c2, using_random=self.pso_using_random
             )
-            for i in range(env.batch_size):
-                self.custom_logger.log_population_stats(
-                    self.val_dataloader_idx2name.get(dataloader_idx, dataloader_idx),
-                    idx * env.batch_size + i,
-                    pso_idx,
-                    info["population_costs"][i],
-                    info["gbest_cost"][i],
-                )
+            # for i in range(env.batch_size):
+            #     self.custom_logger.log_population_stats(
+            #         self.val_dataloader_idx2name.get(dataloader_idx, dataloader_idx),
+            #         idx * env.batch_size + i,
+            #         pso_idx,
+            #         info["population_costs"][i],
+            #         info["gbest_cost"][i],
+            #     )
 
         self.val_gbest_dataloader["wc1c2"][dataloader_idx] = (
             self.val_gbest_dataloader["wc1c2"].get(dataloader_idx, [])
@@ -154,8 +146,54 @@ class PolicyGradientNaive(L.LightningModule):
                 self.log(
                     f"val_{key}/{self.val_dataloader_idx2name.get(dataloader_idx, dataloader_idx)}",
                     avg_val_gbest,
-                    prog_bar=True,
+                    prog_bar=True if key == "wc1c2" else False,
                 )
         self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}}
 
         self.custom_logger.save_population_stats()
+
+    def test_step(self, env: BaseEnvPSOBatchProblem, idx, dataloader_idx=0):
+        # Same as validation step but logs to test_dataloader_idx2name and saves test gbest results separately
+        observations, _ = env.reset()
+
+        self.test_gbest_dataloader["initial"][dataloader_idx] = (
+            self.test_gbest_dataloader["initial"].get(dataloader_idx, [])
+            + env.val_gbest.tolist()
+        )
+
+        # 2. GNN embeddings (single forward pass for all graphs via PyG Batch)
+        problem_embeddings = self.agent.get_problem_embedding(env.problem)  # (B, dim, emb_dim)
+
+        # 3. PSO loop
+        for pso_idx in range(self.pso_iterations_infer):
+            wc1c2, _, _ = self.agent.get_action((*observations, problem_embeddings))
+
+            # Step the env and log population stats for this iteration
+            observations, _, _, _, info = env.step_eval(
+                wc1c2, using_random=self.pso_using_random
+            )
+            # for i in range(env.batch_size):
+            #     self.custom_logger.log_population_stats(
+            #         self.test_dataloader_idx2name.get(dataloader_idx, dataloader_idx),
+            #         idx * env.batch_size + i,
+            #         pso_idx,
+            #         info["population_costs"][i],
+            #         info["gbest_cost"][i],
+            #     )
+
+        self.test_gbest_dataloader["wc1c2"][dataloader_idx] = (
+            self.test_gbest_dataloader["wc1c2"].get(dataloader_idx, [])
+            + env.val_gbest.tolist()
+        )
+    
+    def on_test_epoch_end(self):
+        for key in self.test_gbest_dataloader.keys():
+            for dataloader_idx in self.test_gbest_dataloader[key].keys():
+                test_gbest_list = self.test_gbest_dataloader[key][dataloader_idx]
+                avg_test_gbest = sum(test_gbest_list) / len(test_gbest_list)
+                self.log(
+                    f"test_{key}/{self.test_dataloader_idx2name.get(dataloader_idx, dataloader_idx)}",
+                    avg_test_gbest,
+                    prog_bar=True if key == "wc1c2" else False,
+                )
+        self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}}
