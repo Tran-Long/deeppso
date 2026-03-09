@@ -100,4 +100,6 @@ class Net(nn.Module):
         matrix = torch.zeros(size=(n_nodes, n_nodes), device=device)
         matrix[pyg.edge_index[0], pyg.edge_index[1]] = vector
         return matrix
+
+    
         

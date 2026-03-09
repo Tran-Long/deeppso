@@ -108,7 +108,6 @@ def main(cfg: DictConfig) -> None:
             len(trainer.device_ids) == 1
         ), "Multiple devices not supported for data module initialization yet."
         device = f"{device}:{trainer.device_ids[0]}" if trainer.device_ids else device
-        print(device)
     env_module = EnvDataModule(**config["env"], device=device)
     rl_agent = init_module(config["rl_agent"])
     rl_train = init_module(

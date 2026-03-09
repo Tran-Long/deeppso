@@ -1,8 +1,9 @@
 from deepaco.deep_aco_module import DeepACOModule
+from pytorch_lightning.callbacks.progress.tqdm_progress import Tqdm
 import pytorch_lightning as L
 import torch
 import yaml
-from envs import EnvDataModule, TSPProblem
+from envs import EnvDataModule
 
 class GradientNormLogger(L.Callback):
     def on_before_optimizer_step(self, trainer: L.Trainer, pl_module: L.LightningModule, optimizer: torch.optim.Optimizer) -> None:
@@ -25,9 +26,41 @@ class GradientNormLogger(L.Callback):
                 on_epoch=False
             )
 
+class PeriodicTestCallback(L.Callback):
+    def __init__(self, run_every_n_epochs=1):
+        self.run_every_n_epochs = run_every_n_epochs
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        # Check if it's the right epoch
+        if (trainer.current_epoch + 1) % self.run_every_n_epochs == 0:
+            # Avoid calling trainer.test() here — it resets trainer._results to None,
+            # which breaks the training loop's logger connector assertion that follows.
+            # Instead, manually run test_step + on_test_epoch_end without touching trainer state.
+            was_training = pl_module.training
+            pl_module.eval()
+            with torch.no_grad():
+                test_dataloaders = trainer.datamodule.test_dataloader()
+                for dataloader_idx, dataloader in enumerate(test_dataloaders):
+                    pbar = Tqdm(
+                        desc=f"Testing (dl={dataloader_idx})",
+                        total=len(dataloader),
+                        leave=False,
+                        dynamic_ncols=True,
+                    )
+                    for batch_idx, batch in enumerate(dataloader):
+                        pl_module.test_step(
+                            batch, batch_idx, dataloader_idx=dataloader_idx
+                        )
+                        pbar.update()
+                    pbar.close()
+            pl_module.on_test_epoch_end()
+            if was_training:
+                pl_module.train()
+
+
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Train an ACO agent on via Policy Gradient.")
+    parser = argparse.ArgumentParser(description="Train an ACO agent via Policy Gradient.")
     parser.add_argument(
         "--config",
         type=str,
@@ -36,15 +69,30 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = yaml.safe_load(open(args.config, "r"))
+    callbacks = [GradientNormLogger()]
+    enable_test = config["env"]["test_cfg"].get("enable", False)
+    if enable_test:
+        callbacks.append(PeriodicTestCallback())
     trainer = L.Trainer(
         **config["trainer"],
-        callbacks=[GradientNormLogger()])
+        callbacks=callbacks)
 
     # decide device for data module from trainer
     device = trainer.accelerator.name() if trainer.accelerator else "cpu"
+    if device == "cuda":
+        assert (
+            len(trainer.device_ids) == 1
+        ), "Multiple devices not supported for data module initialization yet."
+        device = f"{device}:{trainer.device_ids[0]}" if trainer.device_ids else device
 
 
     data_module = EnvDataModule(**config["env"], device=device)
     model = DeepACOModule(**config["aco_agent"])
-
+    model.val_idx2names = (
+        data_module.val_dataloader_idx2name
+    )  # For logging purposes
+    if enable_test:
+        model.test_idx2names = (
+            data_module.test_dataloader_idx2name
+        )  # For logging purposes
     trainer.fit(model, datamodule=data_module)
