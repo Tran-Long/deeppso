@@ -3,5 +3,7 @@ __pycache__
 lightning_logs
 .vscode
 logs
-.log
+*.log
 data
+temp.ipynb
+test.ipynb

@@ -70,6 +70,7 @@ class EnvDataModule(L.LightningDataModule):
         self.validation_cfg = validation_cfg
         self.test_cfg = test_cfg
         self.problem_cls, self.env_cls = MAPPING_PROBLEM_TO_ENV[problem_sig]
+        self.problem_cls.prepare_dataset()
         self.train_dataset = ProblemDataset(
             self.problem_cls,
             self.env_cls,

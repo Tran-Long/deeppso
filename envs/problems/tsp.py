@@ -1,4 +1,5 @@
 from functools import cached_property
+import os
 import random
 from typing import Optional
 
@@ -7,6 +8,7 @@ from .base import BaseProblem
 import torch
 from pathlib import Path
 from torch_geometric.data import Data, Batch
+from ..utils import download_file_from_google_drive
 
 def get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode) -> dict[int, int]:
     if isinstance(n_cities, int):
@@ -113,12 +115,12 @@ class TSPBatchProblem(BaseProblem):
         print(f">>> n_cities to k_sparse mapping for TSP validation datasets: {n_cities2k_sparse_mapping}")
         all_n_cities = list(set(n_cities2k_sparse_mapping.keys()))
         if n_dims == 2:
-            val_files = (Path(cls.DATA_FOLDER) / "val").glob('valDataset-*.pt')
+            val_files = list((Path(cls.DATA_FOLDER) / "val").glob('valDataset-*.pt'))
             for val_file in val_files:
                 n_cities_file = int(val_file.stem.split('-')[-1])
                 if n_cities_file not in all_n_cities:
                     continue  # Skip files that don't match the n_cities values we're interested in
-                k_sparse_file = n_cities2k_sparse_mapping.get(n_cities_file, n_cities_file)
+                k_sparse_file = n_cities2k_sparse_mapping[n_cities_file]
                 val_datasets_dict[f"{n_cities_file}_file"] = []
                 # Load and optionally limit the number of instances from the file
                 val_tensor = torch.load(val_file)[:random_size]
@@ -127,11 +129,10 @@ class TSPBatchProblem(BaseProblem):
                     problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_coordinates.shape[0], mode=mode, n_dims=n_dims, device=device)
                     problem_instance.set_coordinates(batch_coordinates)
                     val_datasets_dict[f"{n_cities_file}_file"].append(problem_instance)
-
         need_random = []
         for n_ct in all_n_cities:
             if f"{n_ct}_file" not in val_datasets_dict:
-                print(f">>> [Warning]: No validation files found for n_cities in {all_n_cities}. Generating random instances for these.")
+                print(f"⚠️ [Warning]: No validation files found for {n_ct}. Generating random instances for these.")
                 need_random.append(n_ct)
             elif random_include:
                 need_random.append(n_ct)
@@ -175,7 +176,7 @@ class TSPBatchProblem(BaseProblem):
         need_random = []
         for n_ct in all_n_cities:
             if f"{n_ct}_file" not in test_datasets_dict:
-                print(f">>> [Warning]: No test files found for n_cities in {all_n_cities}. Generating random instances for these.")
+                print(f"⚠️ [Warning]: No test files found for {n_ct}. Generating random instances for these.")
                 need_random.append(n_ct)
             elif random_include:
                 need_random.append(n_ct)
@@ -187,3 +188,24 @@ class TSPBatchProblem(BaseProblem):
         for name, datasets in test_datasets_dict.items():
             print(f"    - {name}: {len(datasets)} instances")
         return test_datasets_dict
+
+    @classmethod
+    def prepare_dataset(cls):
+        # Check if data folder exists and has files, if not, download and prepare
+        val_folder = cls.DATA_FOLDER / "val"
+        test_folder = cls.DATA_FOLDER / "test"
+        if not val_folder.exists() or not any(val_folder.iterdir()) or not test_folder.exists() or not any(test_folder.iterdir()):
+            print(f"⚠️ Data folder {cls.DATA_FOLDER} is missing or empty. Downloading and preparing datasets...")
+            try:
+                os.remove(cls.DATA_FOLDER)  # Clear the folder if it exists
+            except Exception:
+                pass
+            root_data_folder = cls.DATA_FOLDER.parent
+            os.makedirs(root_data_folder, exist_ok=True)
+            zip_path = root_data_folder / "tsp_datasets.zip"
+            download_file_from_google_drive("1bAoMCVDNl_42rdRy1YlwSAvLYeiSdami", str(zip_path))
+            import zipfile
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(root_data_folder)
+            zip_path.unlink()  # Remove the zip file after extraction
+            print(f"🎯 Datasets downloaded and prepared at {cls.DATA_FOLDER}.")
