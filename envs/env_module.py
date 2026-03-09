@@ -130,19 +130,19 @@ class EnvDataModule(L.LightningDataModule):
     def train_dataloader(self):
         # Return a dataloader that yields the same dataset instance repeatedly
         return DataLoader(
-            self.train_dataset, batch_size=1, collate_fn=single_collate_fn
+            self.train_dataset, batch_size=1, collate_fn=single_collate_fn, num_workers=32
         )
 
     def val_dataloader(self):
         return [
-            DataLoader(dataset, batch_size=1, collate_fn=single_collate_fn)
+            DataLoader(dataset, batch_size=1, collate_fn=single_collate_fn, num_workers=32)
             for dataset in self.val_datasets
         ]
     
     def test_dataloader(self):
         # For simplicity, we use the same validation datasets for testing. You can modify this to use separate test datasets if needed.
         return [
-            DataLoader(dataset, batch_size=1, collate_fn=single_collate_fn)
+            DataLoader(dataset, batch_size=1, collate_fn=single_collate_fn, num_workers=32)
             for dataset in self.test_datasets
         ]
 

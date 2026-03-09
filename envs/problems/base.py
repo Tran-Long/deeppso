@@ -9,6 +9,9 @@ class BaseProblem:
     def __init__(self, **kwargs):
         pass
 
+    def to(self, device):
+        return self
+
     def evaluate(self, solutions):
         raise NotImplementedError("This method should be overridden by subclasses.")
 

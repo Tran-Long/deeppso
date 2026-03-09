@@ -18,13 +18,12 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         self,
         n_particles: int,
         problem: TSPBatchProblem,
-        device="cpu",
         train_n_starts=1,
         eval_n_starts=1,
         init_n_heuristic=0,
         **kwargs,
     ):
-        super().__init__(n_particles, problem, device=device)
+        super().__init__(n_particles, problem)
         self.n_cities = problem.n_cities
         self.k_sparse = problem.k_sparse
         self.dim = self.n_cities * self.k_sparse
@@ -68,9 +67,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
                     "eval_n_starts must be None, an int, or a float in (0, 1]."
                 )
 
-    def initialize_population(
-        self,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def initialize_population(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         pbest = torch.zeros(
             (self.batch_size, self.n_particles, self.dim),
             dtype=torch.float,
@@ -96,7 +93,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
                 heuristic_population.append(particle)
         if len(heuristic_population) == 0:
             population = torch.rand(
-                (self.batch_size, self.n_particles, self.dim), device=self.device
+                (self.batch_size, self.n_particles, self.dim)
             )
         elif len(heuristic_population) == self.n_particles:
             population = torch.stack(heuristic_population).reshape(
@@ -104,13 +101,12 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             )
         else:
             random_population = torch.rand(
-                (self.batch_size, self.n_particles - self.init_n_heuristic, self.dim),
-                device=self.device,
+                (self.batch_size, self.n_particles - self.init_n_heuristic, self.dim)
             )
             population = torch.cat(
                 [torch.stack(heuristic_population), random_population], dim=1
             )
-        return population, velocity, pbest, gbest
+        return population.to(self.device), velocity, pbest, gbest
 
     def _nearest_neighbor_tour(
         self, problem_idx: int, start_city: int = 0
@@ -128,7 +124,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             visited.add(next_city)
             tour.append(next_city)
             current = next_city
-        return torch.tensor(tour, device=self.device)
+        return torch.tensor(tour)
 
     def _tour_to_edge_weights(
         self, problem_idx: int, tour: torch.Tensor
@@ -139,7 +135,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         edge_to_idx = {
             (u.item(), v.item()): idx for idx, (u, v) in enumerate(edge_index.t())
         }
-        weights = torch.zeros(self.dim, device=self.device)
+        weights = torch.zeros(self.dim)
         for i in range(len(tour)):
             u = tour[i].item()
             v = tour[(i + 1) % len(tour)].item()  # Wrap around to form a cycle
@@ -158,6 +154,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         return_stochastic_cost: bool = True,
         **kwargs,
     ):
+        wc1c2 = wc1c2.to(self.device)
         w = wc1c2[..., 0]  # shape: (batch_size, n_particles, dim)
         c1 = wc1c2[..., 1]  # shape: (batch_size, n_particles, dim)
         c2 = wc1c2[..., 2]  # shape: (batch_size, n_particles, dim)
@@ -199,13 +196,8 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             None,
             None,
             {
-                "population_costs": costs.detach()
-                .cpu()
-                .numpy()
-                .tolist(),  # List of lists: (batch_size, n_particles)
-                "gbest_cost": self.val_gbest.cpu()
-                .numpy()
-                .tolist(),  # List: (batch_size,)
+                "population_costs": costs.cpu().numpy().tolist(),  # List of lists: (batch_size, n_particles)
+                "gbest_cost": self.val_gbest.cpu().numpy().tolist(),  # List: (batch_size,)
             },
         )
 
@@ -238,103 +230,86 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             paths: (batch_size, n_particles, n_cities)
             costs: (batch_size, n_particles)
         """
-        # Convert population edge weights into a (batch_size * n_particles, n_cities, n_cities) matrix for decoding
-        # Shape: (batch_size, n_particles, n_cities, n_cities)
-        mat = torch.full(
-            (self.batch_size, self.n_particles, self.n_cities, self.n_cities),
-            float("-inf"),
-            device=self.population.device,
-        )
+        device = self.population.device
+        B = self.batch_size
+        P = self.n_particles
+        N = self.n_cities
+        k = self.k_sparse
+        BP = B * P
 
-        # Get batched edge_index: (2, batch_size * dim)
+        # --- Sparse lookup tables: avoids O(B*P*N²) dense mat ---
+        # edge_index: (2, B*N*k), edges ordered by src within each batch block
+        # (src layout: [0,0,...0, 1,1,...,1, ..., N-1,...,N-1] with k repeats)
         edge_index = self.problem.pyg_data.edge_index
+        edge_index_reshaped = edge_index.view(2, B, N * k)
+        batch_offsets = torch.arange(B, device=device) * N
+        local_dst = edge_index_reshaped[1] - batch_offsets[:, None]  # (B, N*k)
 
-        # Reshape to (2, batch_size, dim) to separate each graph's edges
-        edge_index_reshaped = edge_index.view(2, self.batch_size, self.dim)
+        # dst_table[b, i, j] = j-th neighbor destination of node i in batch b
+        dst_table = local_dst.view(B, N, k)  # (B, N, k)
 
-        # Remove batch offsets to get local node indices (0 to n_cities-1)
-        batch_offsets = (
-            torch.arange(self.batch_size, device=edge_index.device) * self.n_cities
-        )
-        local_src = edge_index_reshaped[0] - batch_offsets[:, None]  # (batch_size, dim)
-        local_dst = edge_index_reshaped[1] - batch_offsets[:, None]  # (batch_size, dim)
+        # wt_flat[bp, i, :] = k edge weights from node i (zero-copy view of population)
+        # population layout (B, P, N*k) -> (BP, N, k): bp = b*P + p
+        wt_flat = self.population.view(BP, N, k)  # (BP, N, k)
 
-        # Create index tensors for advanced indexing
-        batch_idx = torch.arange(self.batch_size, device=mat.device)[
-            :, None, None
-        ]  # (batch_size, 1, 1)
-        particle_idx = torch.arange(self.n_particles, device=mat.device)[
-            None, :, None
-        ]  # (1, n_particles, 1)
-        src_idx = local_src[:, None, :]  # (batch_size, 1, dim)
-        dst_idx = local_dst[:, None, :]  # (batch_size, 1, dim)
-
-        # Assign: all indices broadcast to (batch_size, n_particles, dim)
-        mat[batch_idx, particle_idx, src_idx, dst_idx] = self.population
-
-        # Reshape mat to (batch_size * n_particles, n_cities, n_cities) for easier indexing during decoding
-        mat = mat.view(self.batch_size * self.n_particles, self.n_cities, self.n_cities)
+        # b_indices[bp] = batch index for element bp in the BP dimension (bp // P)
+        b_indices = torch.arange(B, device=device).repeat_interleave(P)  # (BP,)
+        bp_arange = torch.arange(BP, device=device)  # (BP,)
 
         # Sample start cities if not provided
         if start is None:
-            start = torch.randint(
-                low=0,
-                high=self.n_cities,
-                size=(self.batch_size * self.n_particles,),
-                device=self.population.device,
-            )
+            start = torch.randint(0, N, size=(BP,), device=device)
         else:
-            start = start.flatten()  # Ensure shape is (batch_size * n_particles,)
-            assert start.shape == (self.batch_size * self.n_particles,)
+            start = start.to(device).flatten()
+            assert start.shape == (BP,)
+
         # Mask to keep track of visited cities: 1 = unvisited, 0 = visited
-        mask = torch.ones(
-            (self.batch_size * self.n_particles, self.n_cities),
-            device=self.population.device,
-        )
-        mask[torch.arange(self.batch_size * self.n_particles), start] = 0
+        mask = torch.ones(BP, N, device=device)
+        mask[bp_arange, start] = 0
 
         # Iteratively build tours
         paths_list = [start]
-        prev = start  # (batch_size * n_particles,)
-        for i in range(self.n_cities - 1):
-            # Gather edge weights from current city: mat[b, p, prev[b,p], :]
-            cur_mat = mat[
-                torch.arange(self.batch_size * self.n_particles), prev, :
-            ]  # (batch_size * n_particles, n_cities)
-            masked_mat = cur_mat.masked_fill(mask == 0, float("-inf"))
+        prev = start  # (BP,)
+        for _ in range(N - 1):
+            # Sparse edge weights and destinations from current node
+            cur_weights = wt_flat[bp_arange, prev, :]  # (BP, k)
+            cur_dst = dst_table[b_indices, prev, :]  # (BP, k)
 
-            # Check if any position is all -inf (shouldn't happen with valid sparse graph)
-            all_inf_mask = (masked_mat == float("-inf")).all(
-                dim=-1
-            )  # (batch_size * n_particles,)
+            # Scatter sparse weights into a dense (BP, N) logit vector
+            logits = torch.full((BP, N), float("-inf"), device=device)
+            logits.scatter_(1, cur_dst, cur_weights)
+
+            # Mask visited cities
+            masked_logits = logits.masked_fill(mask == 0, float("-inf"))
+
+            # Fallback: if a row is all -inf (sparse graph misses a transition),
+            # use uniform distribution over remaining unvisited cities
+            all_inf_mask = (masked_logits == float("-inf")).all(dim=-1)  # (BP,)
             if all_inf_mask.any():
-                # Replace with uniform distribution on unvisited cities
-                masked_mat[all_inf_mask] = 0.0
-                masked_mat = masked_mat.masked_fill(mask == 0, float("-inf"))
+                fallback = torch.zeros(all_inf_mask.sum(), N, device=device)
+                fallback.masked_fill_(mask[all_inf_mask] == 0, float("-inf"))
+                masked_logits[all_inf_mask] = fallback
 
             if stochastic:
                 # Sample from distribution with temperature
-                logits_flat = (masked_mat / temperature).reshape(-1, self.n_cities)
                 actions = dist.Categorical(
-                    logits=logits_flat
-                ).sample()  # (batch_size * n_particles,)
+                    logits=masked_logits / temperature
+                ).sample()  # (BP,)
             else:
                 # Greedy argmax
-                actions = torch.argmax(
-                    masked_mat, dim=-1
-                )  # (batch_size * n_particles,)
+                actions = masked_logits.argmax(dim=-1)  # (BP,)
 
             paths_list.append(actions)
-            mask[torch.arange(self.batch_size * self.n_particles), actions] = 0
+            mask[bp_arange, actions] = 0
             prev = actions
 
-        paths = torch.stack(paths_list, dim=-1)  # (batch_size * n_particles, n_cities)
+        paths = torch.stack(paths_list, dim=-1)  # (BP, N)
 
-        # # sanity check: each tour should visit all cities exactly once
-        # for tour in paths:
-        #     assert (
-        #         len(set(tour.tolist())) == self.n_cities
-        #     ), f"Invalid tour decoded: \n{tour.tolist()}"
+        # sanity check: each tour should visit all cities exactly once
+        for tour in paths:
+            assert (
+                len(set(tour.tolist())) == self.n_cities
+            ), f"Invalid tour decoded: \n{tour.tolist()}"
 
         # Evaluate costs for each problem in batch
         paths = paths.view(self.batch_size, self.n_particles, self.n_cities)
@@ -355,9 +330,9 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         """
         n_starts = self.eval_n_starts
         # Generate random starts: (batch_size, n_particles, n_starts)
-        starts = torch.rand(
-            self.batch_size, self.n_particles, self.n_cities, device=self.device
-        ).argsort(dim=-1)[..., :n_starts]
+        starts = torch.rand(self.batch_size, self.n_particles, self.n_cities).argsort(
+            dim=-1
+        )[..., :n_starts]
 
         # Save original state
         original_population = self.population
@@ -386,8 +361,8 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
 
         # Find the best start for each particle
         best_indices = costs_reshaped.argmin(dim=-1)  # (batch_size, n_particles)
-        batch_idx = torch.arange(self.batch_size, device=self.device)[:, None]
-        particle_idx = torch.arange(original_n_particles, device=self.device)[None, :]
+        batch_idx = torch.arange(self.batch_size)[:, None]
+        particle_idx = torch.arange(original_n_particles)[None, :]
         best_costs = costs_reshaped[
             batch_idx, particle_idx, best_indices
         ]  # (batch_size, n_particles)

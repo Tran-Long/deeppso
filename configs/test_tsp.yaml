@@ -25,27 +25,27 @@ env:
 
   training_cfg:
     batch_size: 2
-    n_cities: [20, 100]
-    k_sparse: [5, 20]
+    n_cities: 20
+    k_sparse: 5
     mode: "range" # "range" or "choice"
-    steps_per_epoch: 256
+    steps_per_epoch: 3
   
   validation_cfg:
-    batch_size: 8
-    n_cities: [20, 50, 100]
-    k_sparse: [5, 10, 20]
+    batch_size: 4
+    n_cities: [20, 50]
+    k_sparse: 5
     mode: "choice"
     random_include: False
-    random_size: 100
+    random_size: 10
     
   test_cfg:
     enable: True
-    batch_size: 8
-    n_cities: [20, 50, 100]
-    k_sparse: [5, 10, 20]
+    batch_size: 4
+    n_cities: [20, 50]
+    k_sparse: 5
     mode: "choice"
     random_include: False
-    random_size: 1280
+    random_size: 10
 
 rl_agent:
   name: "TSPAgent"
@@ -60,7 +60,7 @@ rl_train:
     pso_iterations_infer: 128
 
 trainer:
-  max_epochs: 25
+  max_epochs: 50
   val_check_interval: 1.0
   accelerator: "auto"
   devices: [2, 3]
@@ -70,4 +70,4 @@ trainer:
 log:
   save_dir: "./logs"
   name: "tsp"
-  version: "range_20-100"
+  version: "test"

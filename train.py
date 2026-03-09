@@ -3,12 +3,13 @@ import pytorch_lightning as L
 import torch
 from lightning.pytorch import loggers as pl_loggers
 from omegaconf import DictConfig, OmegaConf
-from pytorch_lightning.callbacks.progress.tqdm_progress import Tqdm
+from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBar
+from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
 
 from envs import EnvDataModule
 from logger import CustomLogger
-from pl_raw import PolicyGradientNaive
 from rl_agents import TSPAgent
+from rl_algorithms import PolicyGradientNaive
 
 _MODULE_REGISTRY = {
     "TSPAgent": TSPAgent,
@@ -64,19 +65,44 @@ class PeriodicTestCallback(L.Callback):
             pl_module.eval()
             with torch.no_grad():
                 test_dataloaders = trainer.datamodule.test_dataloader()
+                pbar_cb = trainer.progress_bar_callback
+                # trainer.num_test_batches is a read-only property backed by
+                # trainer.test_loop._max_batches; set it so progress bar hooks
+                # can read per-dataloader totals, then restore afterward.
+                original_max_batches = trainer.test_loop._max_batches
+                trainer.test_loop._max_batches = [len(dl) for dl in test_dataloaders]
+                # Drive the progress bar callback's lifecycle exactly as Lightning's
+                # internal test loop does — this gives correct bar positioning and
+                # overwrite behaviour alongside the training bar.
+                pbar_cb.on_test_start(trainer, pl_module)
+                # TQDMProgressBar: override leave=True so the bar clears on close
+                if isinstance(pbar_cb, TQDMProgressBar):
+                    pbar_cb.test_progress_bar.leave = False
                 for dataloader_idx, dataloader in enumerate(test_dataloaders):
-                    pbar = Tqdm(
-                        desc=f"Testing (dl={dataloader_idx})",
-                        total=len(dataloader),
-                        leave=False,
-                        dynamic_ncols=True,
-                    )
                     for batch_idx, batch in enumerate(dataloader):
+                        batch = pl_module.transfer_batch_to_device(
+                            batch, pl_module.device, dataloader_idx
+                        )
+                        pbar_cb.on_test_batch_start(
+                            trainer, pl_module, batch, batch_idx, dataloader_idx
+                        )
                         pl_module.test_step(
                             batch, batch_idx, dataloader_idx=dataloader_idx
                         )
-                        pbar.update()
-                    pbar.close()
+                        pbar_cb.on_test_batch_end(
+                            trainer, pl_module, None, batch, batch_idx, dataloader_idx
+                        )
+                # RichProgressBar: save the last task id before on_test_end nulls it,
+                # then hide it — Rich leaves completed tasks visible by default.
+                last_rich_task_id = (
+                    pbar_cb.test_progress_bar_id
+                    if isinstance(pbar_cb, RichProgressBar)
+                    else None
+                )
+                pbar_cb.on_test_end(trainer, pl_module)
+                if last_rich_task_id is not None:
+                    pbar_cb.progress.update(last_rich_task_id, visible=False)
+                trainer.test_loop._max_batches = original_max_batches
             pl_module.on_test_epoch_end()
             if was_training:
                 pl_module.train()
@@ -100,14 +126,15 @@ def main(cfg: DictConfig) -> None:
         **config["trainer"],
         callbacks=callbacks,
         logger=tensorboard_logger,
+        strategy="ddp_find_unused_parameters_true",
     )
     # decide device for data module from trainer
     device = trainer.accelerator.name() if trainer.accelerator else "cpu"
-    if device == "cuda":
-        assert (
-            len(trainer.device_ids) == 1
-        ), "Multiple devices not supported for data module initialization yet."
-        device = f"{device}:{trainer.device_ids[0]}" if trainer.device_ids else device
+    # if device == "cuda":
+    #     assert (
+    #         len(trainer.device_ids) == 1
+    #     ), "Multiple devices not supported for data module initialization yet."
+    #     device = f"{device}:{trainer.device_ids[0]}" if trainer.device_ids else device
     env_module = EnvDataModule(**config["env"], device=device)
     rl_agent = init_module(config["rl_agent"])
     rl_train = init_module(
