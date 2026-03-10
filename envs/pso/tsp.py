@@ -21,9 +21,11 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         train_n_starts=1,
         eval_n_starts=1,
         init_n_heuristic=0,
+        pbest_reward_coef: float = 0.3,
         **kwargs,
     ):
         super().__init__(n_particles, problem)
+        self.pbest_reward_coef = pbest_reward_coef
         self.n_cities = problem.n_cities
         self.k_sparse = problem.k_sparse
         self.dim = self.n_cities * self.k_sparse
@@ -67,7 +69,9 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
                     "eval_n_starts must be None, an int, or a float in (0, 1]."
                 )
 
-    def initialize_population(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def initialize_population(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         pbest = torch.zeros(
             (self.batch_size, self.n_particles, self.dim),
             dtype=torch.float,
@@ -92,9 +96,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
                 particle = edge_weights + torch.randn_like(edge_weights) * 0.3
                 heuristic_population.append(particle)
         if len(heuristic_population) == 0:
-            population = torch.rand(
-                (self.batch_size, self.n_particles, self.dim)
-            )
+            population = torch.rand((self.batch_size, self.n_particles, self.dim))
         elif len(heuristic_population) == self.n_particles:
             population = torch.stack(heuristic_population).reshape(
                 self.batch_size, self.n_particles, self.dim
@@ -149,9 +151,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
     def step(
         self,
         wc1c2: torch.Tensor,
-        temperature: float = 1.0,
         using_random: bool = True,
-        return_stochastic_cost: bool = True,
         **kwargs,
     ):
         wc1c2 = wc1c2.to(self.device)
@@ -174,43 +174,41 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         self.population = self.population + self.velocity
 
         # Get deterministic cost for metadata update
-        _, costs = self.decode_solutions_eval()
-        self.update_metadata(costs)
-
-        # Get stochastic cost for training signal
-        if return_stochastic_cost:
-            _, stochastic_costs = self.decode_solutions(
-                stochastic=True, temperature=temperature
-            )
-            return_cost = (
-                stochastic_costs  # Per-particle cost: (batch_size, n_particles)
-            )
-        else:
-            return_cost = costs.min(
-                dim=-1
-            ).values  # Use deterministic cost if not returning stochastic cost
-
+        _, costs, _, cost_ls = self.decode_solutions_eval()
+        self.update_metadata(costs, cost_ls)
+        # Dense reward: negative current gbest cost, broadcast to all particles.
+        # Non-zero at every step (val_gbest is always finite after reset).
+        # val_gbest is monotone non-increasing, so -val_gbest rewards trajectories
+        # that reach a low cost early — directly incentivising faster convergence.
+        # The learner uses a batch-mean (over B) baseline so this signal is never
+        # cancelled by a particle-mean subtraction.
+        reward = -self.val_gbest.unsqueeze(-1).expand(-1, self.n_particles)  # (B, P)
         return (
             (self.population, self.velocity, self.pbest, self.gbest, self.problem),
-            -return_cost,  # Negate cost to make it a reward (maximize is better)
+            reward,
             None,
             None,
             {
-                "population_costs": costs.cpu().numpy().tolist(),  # List of lists: (batch_size, n_particles)
-                "gbest_cost": self.val_gbest.cpu().numpy().tolist(),  # List: (batch_size,)
+                "population_costs": costs.cpu()
+                .numpy()
+                .tolist(),  # List of lists: (batch_size, n_particles)
+                "population_costs_ls": cost_ls.cpu()
+                .numpy()
+                .tolist(),  # List of lists: (batch_size, n_particles)
+                "gbest_cost": self.val_gbest.cpu()
+                .numpy()
+                .tolist(),  # List: (batch_size,)
             },
         )
 
     def step_train(self, wc1c2, temperature=1.0, using_random=True):
         return self.step(
             wc1c2,
-            return_stochastic_cost=True,
-            temperature=temperature,
             using_random=using_random,
         )
 
     def step_eval(self, wc1c2: torch.Tensor, using_random: bool = True):
-        return self.step(wc1c2, return_stochastic_cost=False, using_random=using_random)
+        return self.step(wc1c2, using_random=using_random)
 
     def decode_solutions(
         self,
@@ -305,11 +303,11 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
 
         paths = torch.stack(paths_list, dim=-1)  # (BP, N)
 
-        # sanity check: each tour should visit all cities exactly once
-        for tour in paths:
-            assert (
-                len(set(tour.tolist())) == self.n_cities
-            ), f"Invalid tour decoded: \n{tour.tolist()}"
+        # # sanity check: each tour should visit all cities exactly once
+        # for tour in paths:
+        #     assert (
+        #         len(set(tour.tolist())) == self.n_cities
+        #     ), f"Invalid tour decoded: \n{tour.tolist()}"
 
         # Evaluate costs for each problem in batch
         paths = paths.view(self.batch_size, self.n_particles, self.n_cities)
@@ -370,4 +368,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             batch_idx, particle_idx, best_indices
         ]  # (batch_size, n_particles, n_cities)
 
-        return best_paths, best_costs
+        ### Local search on best paths
+        best_paths_ls = self.problem.local_search(best_paths)
+        best_costs_ls = self.problem.evaluate(best_paths_ls)
+        return best_paths, best_costs, best_paths_ls, best_costs_ls

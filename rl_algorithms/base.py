@@ -29,11 +29,11 @@ class BaseRLAlgorithm(L.LightningModule):
         assert (
             self.custom_logger is not None
         ), "CustomLogger instance must be provided for logging population stats during validation."
-        self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}}
+        self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
         self.val_dataloader_idx2name = (
             {}
         )  # To be set by EnvDataModule for logging purposes
-        self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}}
+        self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
         self.test_dataloader_idx2name = {}  # To be set by EnvDataModule for logging purposes
 
     def configure_optimizers(self):

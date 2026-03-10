@@ -3,11 +3,12 @@ import torch
 from ..problems import BaseProblem
 
 class BaseEnvPSOBatchProblem:
-    def __init__(self, n_particles, batch_problem: BaseProblem, **kwargs):
+    def __init__(self, n_particles, batch_problem: BaseProblem, use_local_search: bool=False, **kwargs):
         self.n_particles = n_particles
         self.problem = batch_problem
         self.batch_size = self.problem.batch_size
         self.initialized = False
+        self.use_local_search = use_local_search
         self.device = "cpu" # default device, will be updated in training/validation/test loops
 
     def to(self, device):
@@ -72,8 +73,8 @@ class BaseEnvPSOBatchProblem:
         self.val_gbest = torch.full(
             (self.batch_size,), float("inf"), device=self.device
         )
-        _, initial_costs = self.decode_solutions_eval()
-        self.update_metadata(initial_costs)
+        _, initial_costs, _, initial_costs_ls = self.decode_solutions_eval()
+        self.update_metadata(initial_costs, initial_costs_ls)
         return (
             self.population,
             self.velocity,
@@ -114,24 +115,31 @@ class BaseEnvPSOBatchProblem:
         """Default: same stepping for training and evaluation. Subclasses can override for different behavior."""
         return self.step_train(wc1c2, **kwargs)
 
-    def update_metadata(self, costs: torch.Tensor):
+    def update_metadata(self, costs: torch.Tensor, costs_ls: torch.Tensor | None = None):
         # cost shape (batch_size, n_particles), each row represents the costs of the n_particles in each problem instance
+        # return delta_gbest and delta_pbest for potential use in reward shaping, if needed
+        # positive delta means improvement (cost reduction), negative delta means deterioration (cost increase)
         
+        used_costs = costs_ls if self.use_local_search and costs_ls is not None else costs
+
         self.population = self.population.detach().clone() # shape (batch_size, n_particles, dim)
         self.velocity = self.velocity.detach().clone() # shape (batch_size, n_particles, dim)
         self.pbest = self.pbest.detach().clone() # shape (batch_size, n_particles, dim)
         self.gbest = self.gbest.detach().clone() # shape (batch_size, dim)
-        better_pbest_mask = costs < self.val_pbest # shape (batch_size, n_particles)
-        self.val_pbest[better_pbest_mask] = costs[better_pbest_mask]
-
+        better_pbest_mask = used_costs < self.val_pbest # shape (batch_size, n_particles)
+        old_val_pbest = self.val_pbest.clone()
+        self.val_pbest[better_pbest_mask] = used_costs[better_pbest_mask]
+        delta_val_pbest = old_val_pbest - self.val_pbest # shape (batch_size, n_particles)
         self.pbest[better_pbest_mask] = self.population[better_pbest_mask].detach().clone() # shape (batch_size, n_particles, dim))
 
         # Update global best
-        min_cost, min_idx = torch.min(costs, dim=1) # shape (batch_size,), shape (batch_size,)
+        min_cost, min_idx = torch.min(used_costs, dim=1) # shape (batch_size,), shape (batch_size,)
         better_gbest_mask = min_cost < self.val_gbest # shape (batch_size,)
+        old_val_gbest = self.val_gbest.clone()
         self.val_gbest[better_gbest_mask] = min_cost[better_gbest_mask]
+        delta_val_gbest = old_val_gbest - self.val_gbest # shape (batch_size,)
         self.gbest[better_gbest_mask] = self.population[better_gbest_mask, min_idx[better_gbest_mask]].detach().clone() # shape (batch_size, dim)
-        return costs
+        return delta_val_pbest, delta_val_gbest
 
     def evaluate(self, solutions: torch.Tensor):
         """Evaluate the solutions for all problem instances in the batch.

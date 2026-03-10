@@ -1,14 +1,12 @@
-from functools import cached_property
-import os
 import random
-from typing import Optional
-
 import numpy as np
 from .base import BaseProblem
 import torch
 from pathlib import Path
 from torch_geometric.data import Data, Batch
-from ..utils import download_file_from_google_drive
+import numba as nb
+import concurrent.futures
+from functools import partial
 
 def get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode) -> dict[int, int]:
     if isinstance(n_cities, int):
@@ -49,6 +47,7 @@ def get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode) -> dict[int, int]:
 
 class TSPBatchProblem(BaseProblem):
     DATA_FOLDER = Path(__file__).parents[1] / 'data' / 'tsp'
+    GOOGLE_SHARED_ID = "1bAoMCVDNl_42rdRy1YlwSAvLYeiSdami"
     def __init__(self, n_cities, k_sparse, batch_size, n_dims=2, mode="range", **kwargs):
         self.batch_size = batch_size
         self.n_cities_k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
@@ -194,23 +193,63 @@ class TSPBatchProblem(BaseProblem):
             print(f"    - {name}: {len(datasets)} instances")
         return test_datasets_dict
 
-    @classmethod
-    def prepare_dataset(cls):
-        # Check if data folder exists and has files, if not, download and prepare
-        val_folder = cls.DATA_FOLDER / "val"
-        test_folder = cls.DATA_FOLDER / "test"
-        if not val_folder.exists() or not any(val_folder.iterdir()) or not test_folder.exists() or not any(test_folder.iterdir()):
-            print(f"⚠️ Data folder {cls.DATA_FOLDER} is missing or empty. Downloading and preparing datasets...")
-            try:
-                os.remove(cls.DATA_FOLDER)  # Clear the folder if it exists
-            except Exception:
-                pass
-            root_data_folder = cls.DATA_FOLDER.parent
-            os.makedirs(root_data_folder, exist_ok=True)
-            zip_path = root_data_folder / "tsp_datasets.zip"
-            download_file_from_google_drive("1bAoMCVDNl_42rdRy1YlwSAvLYeiSdami", str(zip_path))
-            import zipfile
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(root_data_folder)
-            zip_path.unlink()  # Remove the zip file after extraction
-            print(f"🎯 Datasets downloaded and prepared at {cls.DATA_FOLDER}.")
+    def local_search(self, tours: torch.Tensor, max_iterations=1000):
+        '''
+        Args:
+            tours: torch tensor with shape (batch_size, n_particles, n_cities), each row is a permutation of node indices
+        Returns:
+            improved_tours: torch tensor with shape (batch_size, n_particles, n_cities), locally optimized tours
+        '''
+        batch_size = tours.shape[0]
+        device = tours.device
+        dtype = tours.dtype
+        improved_tours = []
+        dist_matrix_np = self.distance_matrix.cpu().numpy()
+        tours_np = tours.cpu().numpy()
+        for i in range(batch_size):
+            improved_tours.append(torch.from_numpy(batched_two_opt_python(dist_matrix_np[i], tours_np[i], max_iterations=max_iterations)))
+        return torch.stack(improved_tours).type(dtype).to(device)
+
+@nb.njit(nb.float32(nb.float32[:,:], nb.uint16[:], nb.uint16), nogil=True)
+def two_opt_once(distmat, tour, fixed_i = 0):
+    '''in-place operation'''
+    n = tour.shape[0]
+    p = q = 0
+    delta = 0
+    for i in range(1, n - 1) if fixed_i==0 else range(fixed_i, fixed_i+1):
+        for j in range(i + 1, n):
+            node_i, node_j = tour[i], tour[j]
+            node_prev, node_next = tour[i-1], tour[(j+1) % n]
+            if node_prev == node_j or node_next == node_i:
+                continue
+            change = (  distmat[node_prev, node_j] 
+                        + distmat[node_i, node_next]
+                        - distmat[node_prev, node_i] 
+                        - distmat[node_j, node_next])                    
+            if change < delta:
+                p, q, delta = i, j, change
+    if delta < -1e-6:
+        tour[p: q+1] = np.flip(tour[p: q+1])
+        return delta
+    else:
+        return 0.0
+
+@nb.njit(nb.uint16[:](nb.float32[:,:], nb.uint16[:], nb.int64), nogil=True)
+def _two_opt_python(distmat, tour, max_iterations=1000):
+    iterations = 0
+    tour = tour.copy()
+    min_change = -1.0
+    while min_change < -1e-6 and iterations < max_iterations:
+        min_change = two_opt_once(distmat, tour, 0)
+        iterations += 1
+    return tour
+
+def batched_two_opt_python(dist: np.ndarray, tours: np.ndarray, max_iterations=1000):
+    dist = dist.astype(np.float32)
+    tours = tours.astype(np.uint16)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = []
+        for tour in tours:
+            future = executor.submit(partial(_two_opt_python, distmat=dist, max_iterations=max_iterations), tour = tour)
+            futures.append(future)
+        return np.stack([f.result() for f in futures])

@@ -9,11 +9,12 @@ from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
 from envs import EnvDataModule
 from logger import CustomLogger
 from rl_agents import TSPAgent
-from rl_algorithms import PolicyGradientNaive
+from rl_algorithms import PolicyGradientNaive, REINFORCE
 
 _MODULE_REGISTRY = {
     "TSPAgent": TSPAgent,
     "PolicyGradientNaive": PolicyGradientNaive,
+    "REINFORCE": REINFORCE,
 }
 
 
