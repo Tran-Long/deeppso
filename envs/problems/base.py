@@ -7,6 +7,7 @@ class BaseProblem:
     GOOGLE_SHARED_ID = None  # Should be set by subclasses, e.g., "1bAoMCVDNl_42rdRy1YlwSAvLYeiSdami"
     # Each instance will be a single data sample, e.g., a TSP instance
     def __init__(self, **kwargs):
+        self.device = "cpu" # default device, will be updated in training/validation/test loops
         pass
 
     def to(self, device):
@@ -17,6 +18,14 @@ class BaseProblem:
 
     def local_search(self, solutions):
         return solutions
+
+    @classmethod
+    def batch_instances(cls, *instances) -> "BaseProblem":
+        raise NotImplementedError("This method should be overridden by subclasses.")
+
+    @classmethod
+    def unbatch_instances(cls, batch_instance: "BaseProblem") -> list["BaseProblem"]:
+        raise NotImplementedError("This method should be overridden by subclasses.")
 
     @classmethod
     def get_val_instances(cls, **kwargs) -> dict[str, list]:

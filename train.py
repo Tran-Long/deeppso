@@ -8,13 +8,17 @@ from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
 
 from envs import EnvDataModule
 from logger import CustomLogger
-from rl_agents import TSPAgent
-from rl_algorithms import PolicyGradientNaive, REINFORCE
+from rl_agents import TSPAgent, TSPACAgent
+from rl_algorithms import REINFORCE, Myopic, MyopicI, PPO
 
 _MODULE_REGISTRY = {
     "TSPAgent": TSPAgent,
-    "PolicyGradientNaive": PolicyGradientNaive,
+    "TSPACAgent": TSPACAgent,
+
+    "Myopic": Myopic,
+    "MyopicI": MyopicI,
     "REINFORCE": REINFORCE,
+    "PPO": PPO,
 }
 
 
@@ -109,7 +113,7 @@ class PeriodicTestCallback(L.Callback):
                 pl_module.train()
 
 
-@hydra.main(config_path="configs", config_name="tsp", version_base="1.3")
+@hydra.main(config_path="configs", config_name="tsp_ppo", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # Convert OmegaConf to plain dict so downstream code stays unchanged
     config = OmegaConf.to_container(cfg, resolve=True)
@@ -124,10 +128,7 @@ def main(cfg: DictConfig) -> None:
     if enable_test:
         callbacks.append(PeriodicTestCallback())
     trainer = L.Trainer(
-        **config["trainer"],
-        callbacks=callbacks,
-        logger=tensorboard_logger,
-        strategy="ddp_find_unused_parameters_true",
+        **config["trainer"], callbacks=callbacks, logger=tensorboard_logger
     )
     # decide device for data module from trainer
     device = trainer.accelerator.name() if trainer.accelerator else "cpu"

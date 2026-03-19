@@ -54,16 +54,27 @@ env:
     random_size: 640
 
 rl_agent:
-  name: "TSPAgent"
+  name: "TSPACAgent"
   args:
     emb_dim: 32
     act_fn: "silu"
 
 rl_train:
-  name: "REINFORCE"
+  name: "PPO"
   args:
     pso_iterations_train: 64
     pso_iterations_infer: 96
+    use_gae: True
+    clip_coef: 0.2
+    clip_vloss: False
+    entropy_coef: 0.01
+    vf_coef: 0.5
+    gae_lambda: 0.95
+    gamma: 0.99
+    num_updates: 4
+    mini_batch_size: 64
+    max_grad_norm: 0.5
+    norm_adv: True
 
 trainer:
   max_epochs: 25
@@ -78,4 +89,4 @@ trainer:
 log:
   save_dir: "./logs"
   name: "tsp"
-  version: "reinforce-delta_g_raw"
+  version: "ppo-test"

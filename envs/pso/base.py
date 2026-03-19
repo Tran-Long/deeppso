@@ -3,17 +3,21 @@ import torch
 from ..problems import BaseProblem
 
 class BaseEnvPSOBatchProblem:
-    def __init__(self, n_particles, batch_problem: BaseProblem, use_local_search: bool=False, **kwargs):
+    def __init__(self, n_particles, batch_problem: BaseProblem, use_local_search: bool=False, auto_reset: bool=True, patience: int=5, **kwargs):
         self.n_particles = n_particles
         self.problem = batch_problem
         self.batch_size = self.problem.batch_size
         self.initialized = False
         self.use_local_search = use_local_search
+        self.auto_reset = auto_reset # whether to automatically reset done instances in the batch, should be True for training, False for validation/test
+        self.patience = patience
         self.device = "cpu" # default device, will be updated in training/validation/test loops
+        self.cnt_patience = torch.zeros(self.batch_size, dtype=torch.long, device=self.device) # counter for how many consecutive steps without improvement for 
 
     def to(self, device):
         self.device = device
         self.problem = self.problem.to(device)
+        self.cnt_patience = self.cnt_patience.to(device)
         if self.initialized:
             self.population = self.population.to(device)
             self.velocity = self.velocity.to(device)
@@ -21,6 +25,7 @@ class BaseEnvPSOBatchProblem:
             self.gbest = self.gbest.to(device)
             self.val_pbest = self.val_pbest.to(device)
             self.val_gbest = self.val_gbest.to(device)
+            self.val_gbest_ls = self.val_gbest_ls.to(device)
         return self
 
     def initialize_population(
@@ -73,7 +78,10 @@ class BaseEnvPSOBatchProblem:
         self.val_gbest = torch.full(
             (self.batch_size,), float("inf"), device=self.device
         )
-        _, initial_costs, _, initial_costs_ls = self.decode_solutions_eval()
+        self.val_gbest_ls = torch.full(
+            (self.batch_size,), float("inf"), device=self.device
+        ) 
+        _, initial_costs, _, initial_costs_ls, _ = self.decode_solutions_eval()
         self.update_metadata(initial_costs, initial_costs_ls)
         return (
             self.population,
@@ -82,6 +90,23 @@ class BaseEnvPSOBatchProblem:
             self.gbest,
             self.problem,
         ), {}
+
+    def _auto_reset_done(self, done_mask: torch.Tensor, **kwargs):
+        """Reset only the instances where done_mask is True."""
+        if not done_mask.any():
+            return  # no instance is done, no need to reset
+        new_population, new_velocity, new_pbest, new_gbest = self.initialize_population(**kwargs)
+        self.population[done_mask] = new_population[done_mask]
+        self.velocity[done_mask] = new_velocity[done_mask]
+        self.pbest[done_mask] = new_pbest[done_mask]
+        self.gbest[done_mask] = new_gbest[done_mask]
+        self.val_pbest[done_mask] = float("inf")
+        self.val_gbest[done_mask] = float("inf")
+        self.val_gbest_ls[done_mask] = float("inf")
+
+        _, costs, _, costs_ls, _ = self.decode_solutions_eval()
+        self.update_metadata(costs, costs_ls)
+        self.cnt_patience[done_mask] = 0  # reset patience counter for the reset instances
 
     def step_train(self, wc1c2: torch.Tensor, **kwargs) -> tuple[
         tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, BaseProblem],
@@ -99,7 +124,7 @@ class BaseEnvPSOBatchProblem:
         Returns:
             observations (tuple[Tensor, Tensor, Tensor, Tensor, TSPProblem]): (population, velocity, pbest, gbest, problem) — the new state after stepping with wc1c2
             reward (Tensor): evaluation value (cost, **maximize is better**) for each particle after the step, shape (n_particles,)
-            terminated (Tensor): False for all particles (PSO doesn't have terminal states), shape (n_particles,) or maybe None
+            terminated (Tensor): True for particles that have reached a terminal state, shape (n_particles,)
             truncated (Tensor): False for all particles (PSO doesn't have truncated states), shape (n_particles,) or maybe None
             info (dict): optional dict for extra info
         """
@@ -130,7 +155,7 @@ class BaseEnvPSOBatchProblem:
         old_val_pbest = self.val_pbest.clone()
         self.val_pbest[better_pbest_mask] = used_costs[better_pbest_mask]
         delta_val_pbest = old_val_pbest - self.val_pbest # shape (batch_size, n_particles)
-        self.pbest[better_pbest_mask] = self.population[better_pbest_mask].detach().clone() # shape (batch_size, n_particles, dim))
+        self.pbest[better_pbest_mask] = self.population[better_pbest_mask].detach().clone() # shape (batch_size, n_particles, dim)
 
         # Update global best
         min_cost, min_idx = torch.min(used_costs, dim=1) # shape (batch_size,), shape (batch_size,)
@@ -139,14 +164,34 @@ class BaseEnvPSOBatchProblem:
         self.val_gbest[better_gbest_mask] = min_cost[better_gbest_mask]
         delta_val_gbest = old_val_gbest - self.val_gbest # shape (batch_size,)
         self.gbest[better_gbest_mask] = self.population[better_gbest_mask, min_idx[better_gbest_mask]].detach().clone() # shape (batch_size, dim)
+
+        # Update local search global best
+        min_cost_ls, min_idx_ls = torch.min(costs_ls, dim=1)
+        better_gbest_ls_mask = min_cost_ls < self.val_gbest_ls
+        self.val_gbest_ls[better_gbest_ls_mask] = min_cost_ls[better_gbest_ls_mask]
         return delta_val_pbest, delta_val_gbest
 
-    def evaluate(self, solutions: torch.Tensor):
-        """Evaluate the solutions for all problem instances in the batch.
+    @classmethod
+    def batching_observations(
+        cls, 
+        populations: list | torch.Tensor, # list of shape (B, P, D)
+        velocitys: list | torch.Tensor, # list of shape (B, P, D)
+        pbests: list | torch.Tensor, # list of shape (B, P, D)
+        gbests: list | torch.Tensor, # list of shape (B, D)
+        problems: list[BaseProblem] = None,
+        problem_embeddings: list | torch.Tensor | None = None,
+        problem_cls: type[BaseProblem] = None,
+    ):
+        """Batching the PSO state for input to the agent. Default: just return the raw state tensors. Subclasses can override for different behavior."""
 
-        Args:
-            solutions: shape (batch_size, n_particles, problem-specific solution representation)
-        Returns:
-            costs: shape (batch_size, n_particles)
-        """
-        raise NotImplementedError("This method should be overridden by subclasses.")
+        batched_population = torch.concat(populations, dim=0) if isinstance(populations, list) else populations
+        batched_velocity = torch.concat(velocitys, dim=0) if isinstance(velocitys, list) else velocitys
+        batched_pbest = torch.concat(pbests, dim=0) if isinstance(pbests, list) else pbests
+        batched_gbest = torch.concat(gbests, dim=0) if isinstance(gbests, list) else gbests
+
+        if problem_embeddings is not None:
+            problem_embeddings = torch.concat(problem_embeddings, dim=0) if isinstance(problem_embeddings, list) else problem_embeddings
+            return (batched_population, batched_velocity, batched_pbest, batched_gbest, None, problem_embeddings)
+        else:
+            batched_problem = problem_cls.batch_instances(*problems) if problem_cls is not None else None
+            return (batched_population, batched_velocity, batched_pbest, batched_gbest, batched_problem, problem_embeddings)

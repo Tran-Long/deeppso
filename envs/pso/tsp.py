@@ -18,17 +18,20 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         self,
         n_particles: int,
         problem: TSPBatchProblem,
+        reward_mode="greedy",
         train_n_starts=1,
         eval_n_starts=1,
         init_n_heuristic=0,
-        pbest_reward_coef: float = 0.3,
+        patience=5,
+        auto_reset=True,
+        use_local_search=False,
         **kwargs,
     ):
-        super().__init__(n_particles, problem)
-        self.pbest_reward_coef = pbest_reward_coef
+        super().__init__(n_particles, problem, use_local_search, auto_reset, patience)
         self.n_cities = problem.n_cities
         self.k_sparse = problem.k_sparse
         self.dim = self.n_cities * self.k_sparse
+        self.reward_mode = reward_mode
 
         if init_n_heuristic is None:
             self.init_n_heuristic = 0
@@ -152,6 +155,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         self,
         wc1c2: torch.Tensor,
         using_random: bool = True,
+        temperature: float = 1.0,
         **kwargs,
     ):
         wc1c2 = wc1c2.to(self.device)
@@ -174,19 +178,40 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         self.population = self.population + self.velocity
 
         # Get deterministic cost for metadata update
-        _, costs, _, cost_ls = self.decode_solutions_eval()
-        self.update_metadata(costs, cost_ls)
-        # Dense reward: negative current gbest cost, broadcast to all particles.
-        # Non-zero at every step (val_gbest is always finite after reset).
-        # val_gbest is monotone non-increasing, so -val_gbest rewards trajectories
-        # that reach a low cost early — directly incentivising faster convergence.
-        # The learner uses a batch-mean (over B) baseline so this signal is never
-        # cancelled by a particle-mean subtraction.
-        reward = -self.val_gbest.unsqueeze(-1).expand(-1, self.n_particles)  # (B, P)
+        _, costs, _, cost_ls, avg_costs = self.decode_solutions_eval()
+        delta_val_pbest, delta_val_gbest = self.update_metadata(costs, cost_ls)
+        
+        # Update patience counter for early stopping
+        improved = (delta_val_gbest > 0)  # (batch_size, )
+        self.cnt_patience = torch.where(improved, torch.zeros_like(self.cnt_patience, device=self.device), self.cnt_patience + 1)
+        done = self.cnt_patience >= self.patience
+
+        if self.reward_mode == "stochastic":
+            _, stochastic_costs = self.decode_solutions(stochastic=True, temperature=temperature)
+            reward = -stochastic_costs
+        elif self.reward_mode == "greedy":
+            used_costs = cost_ls if self.use_local_search else avg_costs
+            reward = -used_costs  # (B, P)
+        elif self.reward_mode == "pbest":
+            reward = -self.val_pbest  # (B, P)
+        elif self.reward_mode == "delta_pg":
+            reward = delta_val_pbest + 0.5 * delta_val_gbest.unsqueeze(-1)  # (B, P)
+        elif self.reward_mode == "delta_g":
+            reward = torch.clamp(delta_val_gbest, min=0.0)  # (B,)
+        elif self.reward_mode == "delta_g_raw":
+            reward = delta_val_gbest  # (B,)
+        else:
+            raise ValueError(f"Invalid reward_mode: {self.reward_mode}")
+
+        if self.auto_reset:
+            # Automatically reset done instances to keep training stable
+            # No need to do this for evaluation, as we want to see the final performance after patience runs out
+            self._auto_reset_done(done)
+
         return (
             (self.population, self.velocity, self.pbest, self.gbest, self.problem),
             reward,
-            None,
+            done,
             None,
             {
                 "population_costs": costs.cpu()
@@ -205,6 +230,8 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         return self.step(
             wc1c2,
             using_random=using_random,
+            temperature=temperature,
+            stochastic=True,
         )
 
     def step_eval(self, wc1c2: torch.Tensor, using_random: bool = True):
@@ -357,6 +384,9 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             self.batch_size, original_n_particles, n_starts, self.n_cities
         )
 
+        # Find the mean cost for each particle across its starts (for metadata update)
+        mean_costs = costs_reshaped.mean(dim=-1)  # (batch_size, n_particles)
+
         # Find the best start for each particle
         best_indices = costs_reshaped.argmin(dim=-1)  # (batch_size, n_particles)
         batch_idx = torch.arange(self.batch_size)[:, None]
@@ -371,4 +401,4 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         ### Local search on best paths
         best_paths_ls = self.problem.local_search(best_paths)
         best_costs_ls = self.problem.evaluate(best_paths_ls)
-        return best_paths, best_costs, best_paths_ls, best_costs_ls
+        return best_paths, best_costs, best_paths_ls, best_costs_ls, mean_costs

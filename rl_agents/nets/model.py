@@ -232,10 +232,6 @@ class SwarmEncoder(nn.Module):
             use_maxpool=False,
         )
 
-        # Two unique vectors to tell the network who is who
-        # self.particle_type_embed = nn.Parameter(torch.randn(1, emb_dim))
-        # self.gbest_type_embed = nn.Parameter(torch.randn(1, emb_dim))
-
     def forward(self, pos, vel, pbest, gbest, k_sparse=None):
         h_particles = self.pop_stem(pos, vel, pbest, k_sparse=k_sparse)  # (batch_size, n_particles, D)
         h_gbest = self.gbest_stem(

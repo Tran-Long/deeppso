@@ -1,9 +1,11 @@
 import torch
 
 from envs import BaseEnvPSOBatchProblem
+
 from .base import BaseRLAlgorithm
 
-class PolicyGradientNaive(BaseRLAlgorithm):
+
+class Myopic(BaseRLAlgorithm):
     def training_step(self, env: BaseEnvPSOBatchProblem, idx):
         observations, _ = env.reset()
         opt = self.optimizers()
@@ -32,14 +34,17 @@ class PolicyGradientNaive(BaseRLAlgorithm):
                 using_random=self.pso_using_random,
             )
             # REINFORCE with per-problem baseline
-            # Shapes: reward (B, P), log_probs (B, P), entropy (B, P)
+            # Shapes: reward (B, P) or (B,), log_probs (B, P), entropy (B, P)
             #   - reward[b,p] = negative stochastic tour cost of particle p in problem b
             #   - log_probs[b,p] = log π(action | state) for particle p, summed over 3 params, meaned over D edges
             #   - baseline[b] = mean reward across particles in problem b
             #   - advantage[b,p] = how much better/worse particle p did vs. swarm average
             baseline = reward.mean(dim=-1, keepdim=True)  # (B, 1)
-            advantage = reward - baseline  # (B, P)
-            reinforce_loss = -(advantage * log_probs).mean()  # scalar: mean over B×P
+            advantage = reward - baseline  # (B, P) or (B,)
+            if len(reward.shape) == 2:
+                reinforce_loss = -(advantage * log_probs).mean()  # scalar: mean over B×P
+            elif len(reward.shape) == 1:
+                reinforce_loss = -(advantage * log_probs.mean(dim=-1)).mean()  # scalar: mean over B
 
             loss = reinforce_loss - 0.01 * entropy.mean()
             # Add to the live graph — backward is deferred until after the loop.
@@ -51,8 +56,6 @@ class PolicyGradientNaive(BaseRLAlgorithm):
         # tsp_embedding's graph is traversed exactly once here.
         self.manual_backward(total_loss)
         self.clip_gradients(opt, gradient_clip_val=1.7, gradient_clip_algorithm="norm")
-        # grad_norm = torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1.7)
-        # self.log("gradient_norm", grad_norm, prog_bar=True, batch_size=1)
         opt.step()
         opt.zero_grad()
 

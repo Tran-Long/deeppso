@@ -49,6 +49,7 @@ class TSPBatchProblem(BaseProblem):
     DATA_FOLDER = Path(__file__).parents[1] / 'data' / 'tsp'
     GOOGLE_SHARED_ID = "1bAoMCVDNl_42rdRy1YlwSAvLYeiSdami"
     def __init__(self, n_cities, k_sparse, batch_size, n_dims=2, mode="range", **kwargs):
+        super().__init__(**kwargs)
         self.batch_size = batch_size
         self.n_cities_k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
         self.n_cities = random.choice(list(self.n_cities_k_sparse_mapping.keys()))
@@ -58,9 +59,9 @@ class TSPBatchProblem(BaseProblem):
         self.set_coordinates()
 
     def set_coordinates(self, coordinates: torch.Tensor = None):
-        self.coordinates = coordinates if coordinates is not None else torch.rand(self.batch_size, self.n_cities, self.n_dims)
+        self.coordinates = coordinates.to(self.device) if coordinates is not None else torch.rand(self.batch_size, self.n_cities, self.n_dims).to(self.device)
         self.distance_matrix = torch.norm(self.coordinates[:, :, None] - self.coordinates[:, None, :], dim=3, p=2)
-        self.distance_matrix[torch.arange(self.batch_size)[:, None], torch.arange(self.n_cities), torch.arange(self.n_cities)] = 1e9
+        self.distance_matrix[torch.arange(self.batch_size, device=self.device)[:, None], torch.arange(self.n_cities, device=self.device), torch.arange(self.n_cities, device=self.device)] = 1e9
         
         ########################
         # Precompute PyG Data object with sparse edges for GNN processing
@@ -71,13 +72,13 @@ class TSPBatchProblem(BaseProblem):
 
         # Vectorized edge_index construction
         # Source nodes: repeat [0,1,...,n_cities-1] k_sparse times for each batch
-        src = torch.arange(n_cities).unsqueeze(1).expand(-1, self.k_sparse).reshape(-1)
+        src = torch.arange(n_cities, device=self.device).unsqueeze(1).expand(-1, self.k_sparse).reshape(-1)
         src = src.unsqueeze(0).expand(batch_size, -1)  # (batch_size, n_cities * k_sparse)
         # Destination nodes: flatten topk_indices
         dst = topk_indices.reshape(batch_size, -1)  # (batch_size, n_cities * k_sparse)
 
         # Add batch offsets to create a single batched graph
-        batch_offsets = torch.arange(batch_size) * n_cities
+        batch_offsets = torch.arange(batch_size, device=self.device) * n_cities
         src_batched = (src + batch_offsets[:, None]).reshape(-1)
         dst_batched = (dst + batch_offsets[:, None]).reshape(-1)
         edge_index = torch.stack([src_batched, dst_batched])
@@ -86,13 +87,14 @@ class TSPBatchProblem(BaseProblem):
         edge_attr_batched = topk_values.reshape(-1, 1)  # (batch_size * n_cities * k_sparse, 1)
 
         # Create batch assignment tensor for PyG
-        batch_tensor = torch.arange(batch_size).repeat_interleave(n_cities)
+        batch_tensor = torch.arange(batch_size, device=self.device).repeat_interleave(n_cities)
 
         # Create a single Batch object directly
         self.pyg_data: Batch = Batch(x=x_batched, edge_index=edge_index, edge_attr=edge_attr_batched, batch=batch_tensor)
         ########################
 
     def to(self, device):
+        self.device = device
         self.coordinates = self.coordinates.to(device)
         self.distance_matrix = self.distance_matrix.to(device)
         self.pyg_data = self.pyg_data.to(device)
@@ -209,6 +211,31 @@ class TSPBatchProblem(BaseProblem):
         for i in range(batch_size):
             improved_tours.append(torch.from_numpy(batched_two_opt_python(dist_matrix_np[i], tours_np[i], max_iterations=max_iterations)))
         return torch.stack(improved_tours).type(dtype).to(device)
+    
+    @classmethod
+    def batch_instances(cls, *instances: "TSPBatchProblem") -> "TSPBatchProblem":
+        n_cities = instances[0].n_cities
+        k_sparse = instances[0].k_sparse
+        n_dims = instances[0].n_dims
+        coordinates = torch.cat([instance.coordinates for instance in instances], dim=0)
+        batch_size = coordinates.shape[0]
+        batched_problem = cls(n_cities=n_cities, k_sparse=k_sparse, batch_size=batch_size, mode="choice", n_dims=n_dims)
+        batched_problem.set_coordinates(coordinates)
+        return batched_problem
+
+    @classmethod
+    def unbatch_instances(cls, batch_instance: "TSPBatchProblem") -> list["TSPBatchProblem"]:
+        batch_size = batch_instance.batch_size
+        n_cities = batch_instance.n_cities
+        k_sparse = batch_instance.k_sparse
+        n_dims = batch_instance.n_dims
+        unbatched_problems = []
+        for i in range(batch_size):
+            instance = cls(n_cities=n_cities, k_sparse=k_sparse, batch_size=1, mode="choice", n_dims=n_dims)
+            instance.set_coordinates(batch_instance.coordinates[i:i+1])
+            unbatched_problems.append(instance)
+        return unbatched_problems
+
 
 @nb.njit(nb.float32(nb.float32[:,:], nb.uint16[:], nb.uint16), nogil=True)
 def two_opt_once(distmat, tour, fixed_i = 0):

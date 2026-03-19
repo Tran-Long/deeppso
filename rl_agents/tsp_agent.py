@@ -4,7 +4,7 @@ from torch_geometric.data import Batch
 from envs.problems import TSPBatchProblem
 
 from .base import BaseAgent
-from .nets import TSPActorNet
+from .nets import TSPActorNet, TSPCriticNet
 
 class TSPAgent(BaseAgent):
     def __init__(
@@ -41,3 +41,24 @@ class TSPAgent(BaseAgent):
         log_probs = log_probs.sum(dim=-1).mean(dim=-1)  # (batch_size, n_particles)
         pl_entropy = pl_entropy.sum(dim=-1).mean(dim=-1)  # (batch_size, n_particles)
         return wc1c2, log_probs, pl_entropy
+    
+
+class TSPACAgent(TSPAgent):
+    def __init__(
+        self,
+        emb_dim=32,
+        act_fn="silu",
+    ):
+        super().__init__(emb_dim=emb_dim, act_fn=act_fn)
+        self.critic = TSPCriticNet(emb_dim=emb_dim, act_fn=act_fn)
+    
+    def get_action_and_value(self, obs):
+        pos, vel, pbest, gbest, problem, _ = obs
+        action = self.get_action(obs)
+        value = self.critic(pos, vel, pbest, gbest, problem)
+        return action, value
+
+    def get_value(self, obs):
+        pos, vel, pbest, gbest, problem, _ = obs
+        value = self.critic(pos, vel, pbest, gbest, problem)
+        return value

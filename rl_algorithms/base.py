@@ -58,11 +58,12 @@ class BaseRLAlgorithm(L.LightningModule):
         raise NotImplementedError("Training step not implemented yet. Focus is on validation loop for now.")
 
     def validation_step(self, env: BaseEnvPSOBatchProblem, idx, dataloader_idx=0):
+        assert env.auto_reset == False, "Validation env should have auto_reset=False to evaluate final performance after patience runs out."
         observations, _ = env.reset()
 
         self.val_gbest_dataloader["initial"][dataloader_idx] = (
             self.val_gbest_dataloader["initial"].get(dataloader_idx, [])
-            + env.val_gbest.tolist()
+            + env.val_gbest_ls.tolist()
         )
 
         # 2. GNN embeddings (single forward pass for all graphs via PyG Batch)
@@ -89,6 +90,10 @@ class BaseRLAlgorithm(L.LightningModule):
             self.val_gbest_dataloader["wc1c2"].get(dataloader_idx, [])
             + env.val_gbest.tolist()
         )
+        self.val_gbest_dataloader["wc1c2_ls"][dataloader_idx] = (
+            self.val_gbest_dataloader["wc1c2_ls"].get(dataloader_idx, [])
+            + env.val_gbest_ls.tolist()
+        )
 
     def on_validation_epoch_end(self):
         for key in self.val_gbest_dataloader.keys():
@@ -101,17 +106,18 @@ class BaseRLAlgorithm(L.LightningModule):
                     prog_bar=True if key == "wc1c2" else False,
                     sync_dist=True,  # sync across devices for correct avg in DDP
                 )
-        self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}}
+        self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
 
         self.custom_logger.save_population_stats()
 
     def test_step(self, env: BaseEnvPSOBatchProblem, idx, dataloader_idx=0):
         # Same as validation step but logs to test_dataloader_idx2name and saves test gbest results separately
+        assert env.auto_reset == False, "Test env should have auto_reset=False to evaluate final performance after patience runs out."
         observations, _ = env.reset()
 
         self.test_gbest_dataloader["initial"][dataloader_idx] = (
             self.test_gbest_dataloader["initial"].get(dataloader_idx, [])
-            + env.val_gbest.tolist()
+            + env.val_gbest_ls.tolist()
         )
 
         # 2. GNN embeddings (single forward pass for all graphs via PyG Batch)
@@ -138,6 +144,10 @@ class BaseRLAlgorithm(L.LightningModule):
             self.test_gbest_dataloader["wc1c2"].get(dataloader_idx, [])
             + env.val_gbest.tolist()
         )
+        self.test_gbest_dataloader["wc1c2_ls"][dataloader_idx] = (
+            self.test_gbest_dataloader["wc1c2_ls"].get(dataloader_idx, [])
+            + env.val_gbest_ls.tolist()
+        )
     
     def on_test_epoch_end(self):
         for key in self.test_gbest_dataloader.keys():
@@ -150,4 +160,4 @@ class BaseRLAlgorithm(L.LightningModule):
                     prog_bar=True if key == "wc1c2" else False,
                     sync_dist=True,  # sync across devices for correct avg in DDP
                 )
-        self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}}
+        self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}

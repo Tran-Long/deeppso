@@ -1,3 +1,5 @@
 from .base import BaseRLAlgorithm
-from .pl_raw import PolicyGradientNaive
-from .pl_reinforce import REINFORCE
+from .myopic import Myopic
+from .reinforce import REINFORCE
+from .myopic_i import MyopicI
+from .ppo import PPO

@@ -6,21 +6,7 @@ from envs import TSPBatchProblem
 
 from .model import *
 
-
-class TSPActorNet(nn.Module):
-    """
-    Per-edge hyperparameter prediction for PSO-TSP.
-    Architecture:
-        1. TSPEmbGNN  → edge_embs: (dim, emb_dim)   — per-edge graph identity
-        2. SwarmEncoder → particle_ctx: (n_particles, emb_dim), gbest_emb: (1, emb_dim)
-        3. CrossAttention: each particle query attends to [edge_embs, gbest_emb, swarm_mean]
-           → particle_ctx: (n_particles, emb_dim)  — particle "strategy"
-        4. Per-edge MLP: for each (particle, edge) pair, concatenate
-           [pos_e, vel_e, pbest_e, gbest_e,  edge_emb_e,  particle_ctx_p]
-           → shared MLP → mu(w,c1,c2), sigma(w,c1,c2)
-        Output: (n_particles, dim, 3)
-    """
-
+class TSPBackboneNet(nn.Module):
     def __init__(
         self,
         emb_dim=32,
@@ -41,23 +27,10 @@ class TSPActorNet(nn.Module):
         self.layer_norm_attn = nn.LayerNorm(emb_dim)
 
         # --- Type embeddings so attention can distinguish token roles ---
-        self.edge_type_emb = nn.Parameter(torch.randn(1, emb_dim) * 0.02)
-        self.gbest_type_emb = nn.Parameter(torch.randn(1, emb_dim) * 0.02)
-        self.swarm_type_emb = nn.Parameter(torch.randn(1, emb_dim) * 0.02)
-
-        # --- Per-edge MLP heads ---
-        # Input: [pos_e, vel_e, pbest_e, gbest_e] (4) + edge_emb (emb_dim) + particle_ctx (emb_dim)
-        edge_input_dim = 4 + 2 * emb_dim
-        self.edge_head_mu = MLP(
-            units_list=[edge_input_dim, emb_dim, emb_dim, 3],
-            act_fn=act_fn,
-        )
-        self.edge_head_sigma = MLP(
-            units_list=[edge_input_dim, emb_dim, emb_dim, 3],
-            act_fn=act_fn,
-        )
-        self.sigmoid = nn.Sigmoid()
-
+        self.edge_type_emb = nn.Parameter(torch.randn(1, emb_dim))
+        self.gbest_type_emb = nn.Parameter(torch.randn(1, emb_dim))
+        self.swarm_type_emb = nn.Parameter(torch.randn(1, emb_dim))
+    
     def get_problem_embedding(self, tsp_problem: TSPBatchProblem):
         """Use to cache the TSP embedding since it doesn't change during PSO iterations."""
 
@@ -97,22 +70,21 @@ class TSPActorNet(nn.Module):
             wc1c2_mu:    (n_particles, dim, 3)
             wc1c2_sigma: (n_particles, dim, 3)
         """
-        batch_size, n_particles, dim = pos.shape
-
         # --- 1. Particle & gbest embeddings (global summaries) ---
         particle_embeddings, gbest_embedding = self.swarm_emb(
             pos, vel, pbest, gbest, k_sparse=problem.k_sparse
         )  # (batch_size, n_particles, D), (batch_size, 1, D)
 
         # --- 2. Per-edge TSP embedding ---
+        # Shape: (batch_size, dim, emb_dim) — full per-edge embeddings for every problem in the batch
         if problem_embedding is None:
             tsp_embedding = self.get_problem_embedding(problem)
         else:
             tsp_embedding = problem_embedding
 
         # --- 3. Cross-attention ---
-        # Context: [edge_embs(dim, D), gbest(1, D), swarm_mean(1, D)]
         swarm_mean = particle_embeddings.mean(dim=1, keepdim=True)  # (batch_size, 1, D)
+        # Context: [batch_size, edge_embs(dim, D), gbest(batch_size, 1, D), swarm_mean(batch_size, 1, D)]
         context = torch.cat(
             [
                 tsp_embedding + self.edge_type_emb,  # (batch_size, dim, D)
@@ -129,22 +101,92 @@ class TSPActorNet(nn.Module):
         particle_ctx = self.layer_norm_attn(
             attn_output + particle_embeddings
         )  # (batch_size, n_particles, D)
-        # --- 4. Per-edge feature assembly ---
-        # Local PSO scalars per edge: (n_particles, dim, 4)
+
+        return particle_ctx, tsp_embedding  # (batch_size, n_particles, D), (batch_size, dim, emb_dim)
+
+class TSPActorNet(nn.Module):
+    """
+    Per-edge hyperparameter prediction for PSO-TSP.
+    Architecture:
+        1. TSPEmbGNN  → edge_embs: (dim, emb_dim)   — per-edge graph identity
+        2. SwarmEncoder → particle_ctx: (n_particles, emb_dim), gbest_emb: (1, emb_dim)
+        3. CrossAttention: each particle query attends to [edge_embs, gbest_emb, swarm_mean]
+           → particle_ctx: (n_particles, emb_dim)  — particle "strategy"
+        4. Per-edge MLP: for each (particle, edge) pair, concatenate
+           [pos_e, vel_e, pbest_e, gbest_e,  edge_emb_e,  particle_ctx_p]
+           → shared MLP → mu(w,c1,c2), sigma(w,c1,c2)
+        Output: (n_particles, dim, 3)
+    """
+
+    def __init__(
+        self,
+        emb_dim=32,
+        act_fn="silu",
+        **kwargs,
+    ):
+        super().__init__()
+        self.emb_dim = emb_dim
+        self.act_fn = act_fn
+
+        # --- Backbone ---
+        self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn)
+
+        # --- Per-edge MLP heads ---
+        # Input: [pos_e, vel_e, pbest_e, gbest_e] (4) + edge_emb (emb_dim) + particle_ctx (emb_dim)
+        edge_input_dim = 2 * emb_dim + 4
+        self.edge_head_mu = MLP(
+            units_list=[edge_input_dim, emb_dim, emb_dim, 3],
+            act_fn=act_fn,
+        )
+        self.edge_head_sigma = MLP(
+            units_list=[edge_input_dim, emb_dim, emb_dim, 3],
+            act_fn=act_fn,
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def get_problem_embedding(self, tsp_problem: TSPBatchProblem):
+        return self.backbone.get_problem_embedding(tsp_problem)
+
+    
+    def forward(
+        self,
+        pos: torch.Tensor,
+        vel: torch.Tensor,
+        pbest: torch.Tensor,
+        gbest: torch.Tensor,
+        problem: TSPBatchProblem,
+        problem_embedding: torch.Tensor = None,
+    ):
+        """
+        Args:
+            pos, vel, pbest: (batch_size, n_particles, dim)
+            gbest: (batch_size, dim)
+            problem: TSPBatchProblem object (used when problem_embedding is None)
+            problem_embedding: pre-computed (batch_size, dim, emb_dim) — full per-edge embeddings
+        Returns:
+            wc1c2_mu:    (n_particles, dim, 3)
+            wc1c2_sigma: (n_particles, dim, 3)
+        """
+        batch_size, n_particles, dim = pos.shape
+        particle_ctx, tsp_embedding = self.backbone(
+            pos, vel, pbest, gbest, problem, problem_embedding
+        )  # (batch_size, n_particles, dim, 4 + 2*emb_dim)
+
+        # --- Per-edge feature assembly ---
+        # Local PSO scalars per edge: (batch_size, n_particles, dim, 4)
         local_feats = torch.stack(
             [pos, vel, pbest, gbest.unsqueeze(-2).expand_as(pos)], dim=-1
         )
-        # (batch_size, n_particles, dim, 4)
         # Broadcast embeddings to every edge:
         # tsp_embedding: (batch_size, dim, D) → (batch_size, n_particles, dim, D)
         edge_emb_expanded = tsp_embedding.unsqueeze(1).expand(-1, n_particles, -1, -1)
         # particle_ctx: (batch_size, n_particles, D) → (batch_size, n_particles, dim, D)
         ctx_expanded = particle_ctx.unsqueeze(2).expand(-1, -1, dim, -1)
 
-        # Concatenate: (batch_size, n_particles, dim, 4 + 2*D)
+        # Concatenate: (batch_size, n_particles, dim, 2*D + 4)
         edge_input = torch.cat([local_feats, edge_emb_expanded, ctx_expanded], dim=-1)
 
-        # --- 5. Shared MLP → per-edge (w, c1, c2) ---
+        # --- Shared MLP → per-edge (w, c1, c2) ---
         raw_mu = self.edge_head_mu(edge_input)  # (batch_size, n_particles, dim, 3)
         raw_sigma = self.edge_head_sigma(edge_input)  # (batch_size, n_particles, dim, 3)
 
@@ -161,3 +203,52 @@ class TSPActorNet(nn.Module):
             [w_sig, c1_sig, c2_sig], dim=-1
         )  # (batch_size, n_particles, dim, 3)
         return wc1c2_mu, wc1c2_sigma
+
+class TSPCriticNet(nn.Module):
+    def __init__(
+        self,
+        emb_dim=32,
+        act_fn="silu",
+        **kwargs,
+    ):
+        super().__init__()
+        # --- Backbone ---
+        self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn)
+        self.particle_value_head = MLP(
+            units_list=[emb_dim*3, emb_dim, 1],
+            act_fn=act_fn,
+        )
+
+    def get_problem_embedding(self, tsp_problem: TSPBatchProblem):
+        return self.backbone.get_problem_embedding(tsp_problem)
+
+
+    def forward(
+        self,
+        pos: torch.Tensor,
+        vel: torch.Tensor,
+        pbest: torch.Tensor,
+        gbest: torch.Tensor,
+        problem: TSPBatchProblem,
+        problem_embedding: torch.Tensor = None,
+    ):
+        """
+        Args:
+            pos, vel, pbest: (batch_size, n_particles, dim)
+            gbest: (batch_size, dim)
+            problem: TSPBatchProblem object (used when problem_embedding is None)
+            problem_embedding: pre-computed (batch_size, dim, emb_dim) — full per-edge embeddings
+        Returns:
+            values: (batch_size, 1) predicted value for each batch instance
+        """
+        particle_ctx, tsp_embedding = self.backbone(
+            pos, vel, pbest, gbest, problem, problem_embedding
+        )  # (batch_size, n_particles, emb_dim)
+
+        particle_mean = particle_ctx.mean(dim=1)
+        particle_max = particle_ctx.max(dim=1).values
+        edge_mean = tsp_embedding.mean(dim=1)
+
+        state_repr = torch.cat([particle_mean, particle_max, edge_mean], dim=-1)  # (batch_size, 3*emb_dim)
+        values = self.particle_value_head(state_repr)
+        return values
