@@ -55,7 +55,7 @@ class Myopic(BaseRLAlgorithm):
         # Single backward + optimizer step after all PSO iterations.
         # tsp_embedding's graph is traversed exactly once here.
         self.manual_backward(total_loss)
-        self.clip_gradients(opt, gradient_clip_val=1.7, gradient_clip_algorithm="norm")
+        self.clip_gradients(opt, gradient_clip_val=self.max_grad_norm, gradient_clip_algorithm="norm")
         opt.step()
         opt.zero_grad()
 

@@ -43,9 +43,7 @@ class MyopicI(BaseRLAlgorithm):
             # Single backward + optimizer step after all PSO iterations.
             # tsp_embedding's graph is traversed exactly once here.
             self.manual_backward(loss)
-            self.clip_gradients(opt, gradient_clip_val=1.7, gradient_clip_algorithm="norm")
-            # grad_norm = torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1.7)
-            # self.log("gradient_norm", grad_norm, prog_bar=True, batch_size=1)
+            self.clip_gradients(opt, gradient_clip_val=self.max_grad_norm, gradient_clip_algorithm="norm")
             opt.step()
             opt.zero_grad()
 

@@ -13,6 +13,7 @@ class BaseRLAlgorithm(L.LightningModule):
         agent: BaseAgent,
         pso_iterations_train: int = 10,
         pso_iterations_infer: int = 20,
+        max_grad_norm=1.0,
         pso_using_random: bool = True,
         custom_logger: CustomLogger = None,
     ):
@@ -21,6 +22,7 @@ class BaseRLAlgorithm(L.LightningModule):
         self.pso_iterations_train = pso_iterations_train
         self.pso_iterations_infer = pso_iterations_infer
         self.pso_using_random = pso_using_random
+        self.max_grad_norm = max_grad_norm
 
         self.automatic_optimization = False  # To do manual backward and optimizer step
 

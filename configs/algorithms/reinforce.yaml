@@ -1,0 +1,16 @@
+# @package _global_
+# REINFORCE algorithm configuration
+# Intended to be composed with base config via defaults list
+# Override: python train.py +algorithms=reinforce
+
+rl_agent:
+  name: "TSPAgent"
+  args:
+    emb_dim: 32
+    act_fn: "silu"
+
+rl_train:
+  name: "REINFORCE"
+  args:
+    pso_iterations_train: 64
+    pso_iterations_infer: 96

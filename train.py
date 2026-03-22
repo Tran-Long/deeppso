@@ -5,6 +5,7 @@ from lightning.pytorch import loggers as pl_loggers
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBar
 from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
+from lightning.pytorch.callbacks import DeviceStatsMonitor
 
 from envs import EnvDataModule
 from logger import CustomLogger
@@ -113,7 +114,7 @@ class PeriodicTestCallback(L.Callback):
                 pl_module.train()
 
 
-@hydra.main(config_path="configs", config_name="tsp_ppo", version_base="1.3")
+@hydra.main(config_path="configs", config_name="tsp_main", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # Convert OmegaConf to plain dict so downstream code stays unchanged
     config = OmegaConf.to_container(cfg, resolve=True)
@@ -123,7 +124,7 @@ def main(cfg: DictConfig) -> None:
         **config["log"],
     )
     custom_logger = CustomLogger(log_folder=tensorboard_logger.log_dir)
-    callbacks = [GradientNormLogger()]
+    callbacks = [GradientNormLogger(), DeviceStatsMonitor()]
     enable_test = config["env"]["test_cfg"].get("enable", False)
     if enable_test:
         callbacks.append(PeriodicTestCallback())

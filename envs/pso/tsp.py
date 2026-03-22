@@ -194,6 +194,8 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             reward = -used_costs  # (B, P)
         elif self.reward_mode == "pbest":
             reward = -self.val_pbest  # (B, P)
+        elif self.reward_mode == "gbest":
+            reward = -self.val_gbest  # (B,)
         elif self.reward_mode == "delta_pg":
             reward = delta_val_pbest + 0.5 * delta_val_gbest.unsqueeze(-1)  # (B, P)
         elif self.reward_mode == "delta_g":

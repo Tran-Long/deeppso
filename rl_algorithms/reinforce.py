@@ -126,7 +126,7 @@ class REINFORCE(BaseRLAlgorithm):
         # Phase 4: single backward + optimizer step.                          #
         # ------------------------------------------------------------------ #
         self.manual_backward(total_loss)
-        self.clip_gradients(opt, gradient_clip_val=1.7, gradient_clip_algorithm="norm")
+        self.clip_gradients(opt, gradient_clip_val=self.max_grad_norm, gradient_clip_algorithm="norm")
         opt.step()
         opt.zero_grad()
 

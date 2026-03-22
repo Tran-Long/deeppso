@@ -1,0 +1,15 @@
+# @package _global_
+# Main TSP configuration with algorithm composition
+# 
+# Usage:
+#   python train.py                                    # Uses default algorithm (myopic)
+#   python train.py +algorithms=ppo                    # Override with PPO
+#   python train.py -m +sweeps=tsp_hparam_modular +algorithms=ppo hydra/launcher=joblib
+
+defaults:
+  - base
+  - algorithms: ppo      # Default algorithm; override with +algorithms=<name>
+
+# Override specific base settings if needed
+log:
+  version: "default_algo"

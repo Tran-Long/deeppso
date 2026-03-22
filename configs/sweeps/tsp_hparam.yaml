@@ -1,39 +1,37 @@
 # @package _global_
 #
-# Hyperparameter sweep configuration for TSP training.
+# Modular hyperparameter sweep configuration for TSP training
+# 
+# Works with any algorithm composed from the algorithms/ directory
 #
-# Usage (grid search, runs all combinations concurrently):
-#   python train.py -m +sweeps=tsp_hparam hydra/launcher=joblib
-#
-# Override parallelism on the command line:
-#   python train.py -m +sweeps=tsp_hparam hydra/launcher=joblib hydra.launcher.n_jobs=4
+# Usage:
+#   python train.py -m +sweeps=tsp_hparam_modular hydra/launcher=joblib
+#   python train.py -m +sweeps=tsp_hparam_modular +algorithms=ppo hydra/launcher=joblib
+#   python train.py -m +sweeps=tsp_hparam_modular +algorithms=reinforce hydra/launcher=joblib hydra.launcher.n_jobs=4
 #
 # Add extra overrides on top of this sweep:
-#   python train.py -m +sweeps=tsp_hparam hydra/launcher=joblib trainer.max_epochs=20
+#   python train.py -m +sweeps=tsp_hparam_modular trainer.max_epochs=30 hydra/launcher=joblib
 
 # --- Unique log version per sweep job ---
-# hydra:job.num is the 0-based index of the job within the sweep.
+# hydra:job.num is the 0-based index of the job within the sweep
 log:
-  version: "reinforce0_${hydra:job.num}"
+  version: "myopicS_base_${hydra:job.num}"
 
-# Each joblib worker runs as a single process — no DDP child processes.
-# DDP spawns sub-processes that re-parse sys.argv and fail on Hydra's
-# internal --pipe argument. Using devices=1 avoids the spawn entirely.
+# --- Joblib launcher configuration ---
+# Using single device per job to avoid DDP subprocess issues
 trainer:
-  devices: [0]
+  devices: [2]
   strategy: auto
 
-# --- Joblib launcher defaults (can still be overridden on the CLI) ---
 hydra:
   launcher:
-    # -1  → use all available CPUs; set to a positive int to cap concurrency.
-    n_jobs: 2
+    n_jobs: 1              # Set -1 for all CPUs, adjust as needed
 
   # --- Sweep grid -------------------------------------------------------
   # Each value is a comma-separated list; BasicSweeper creates the
-  # Cartesian product of all lists below.
+  # Cartesian product of all lists below
   sweeper:
     params:
-      # Embedding dimension of the agent network
-      rl_train.name: REINFORCE
-      env.training_cfg.reward_mode: delta_g_raw,stochastic
+      algorithms: myopic
+      +nc_nk_cases: nc20,nc50,nc100,nc200,nc500
+

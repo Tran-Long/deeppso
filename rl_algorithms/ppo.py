@@ -19,7 +19,6 @@ class PPO(BaseRLAlgorithm):
                  gamma=0.99, 
                  num_updates=4, 
                  mini_batch_size=64, 
-                 max_grad_norm=0.5,
                  norm_adv=True, 
                  **kwargs):
         super().__init__(*args, **kwargs)
@@ -36,9 +35,8 @@ class PPO(BaseRLAlgorithm):
         self.gamma = gamma
         self.num_updates = num_updates
         self.mini_batch_size = mini_batch_size
-        self.max_grad_norm = max_grad_norm
         self.norm_adv = norm_adv
-        
+
     def training_step(self, env: BaseEnvPSOBatchProblem, idx):
         assert env.auto_reset, "Vectorized environments must have auto-reset enabled for PPO training."
         observations, _ = env.reset()
