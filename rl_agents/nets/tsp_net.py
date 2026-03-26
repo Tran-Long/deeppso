@@ -11,14 +11,17 @@ class TSPBackboneNet(nn.Module):
         self,
         emb_dim=32,
         act_fn="silu",
+        n_gnn_feats=2,
+        use_k_sparse=True,
         **kwargs,
     ):
         super().__init__()
         self.emb_dim = emb_dim
+        self.use_k_sparse = use_k_sparse
 
         # --- Encoders ---
         self.swarm_emb = SwarmEncoder(emb_dim=emb_dim, act_fn=act_fn)
-        self.tsp_emb = TSPEmbGNN(emb_dim=emb_dim, depth=2, act_fn=act_fn)
+        self.tsp_emb = TSPEmbGNN(emb_dim=emb_dim, feats=n_gnn_feats, depth=2, act_fn=act_fn)
 
         # --- Cross-attention: particle queries attend to (edge_embs + gbest + swarm_mean) ---
         self.cross_attention = nn.MultiheadAttention(
@@ -47,7 +50,7 @@ class TSPBackboneNet(nn.Module):
         )  # (dim, emb_dim) dim - batched number of edges
         
         batched_tsp_embedding = batched_tsp_embedding.view(
-            tsp_problem.batch_size, tsp_problem.n_cities * tsp_problem.k_sparse, self.emb_dim
+            tsp_problem.batch_size, tsp_problem.n_cities * getattr(tsp_problem, 'k_sparse', tsp_problem.n_cities), self.emb_dim
         )  # (B, dim, emb_dim)
         return batched_tsp_embedding
 
@@ -71,10 +74,14 @@ class TSPBackboneNet(nn.Module):
             wc1c2_sigma: (n_particles, dim, 3)
         """
         # --- 1. Particle & gbest embeddings (global summaries) ---
-        particle_embeddings, gbest_embedding = self.swarm_emb(
-            pos, vel, pbest, gbest, k_sparse=problem.k_sparse
-        )  # (batch_size, n_particles, D), (batch_size, 1, D)
-
+        if self.use_k_sparse:
+            particle_embeddings, gbest_embedding = self.swarm_emb(
+                pos, vel, pbest, gbest, k_sparse=getattr(problem, 'k_sparse', problem.n_cities)
+            )  # (batch_size, n_particles, D), (batch_size, 1, D)
+        else:
+            particle_embeddings, gbest_embedding = self.swarm_emb(
+                pos, vel, pbest, gbest, k_sparse=None
+            )  # (batch_size, n_particles, D), (batch_size, 1, D)
         # --- 2. Per-edge TSP embedding ---
         # Shape: (batch_size, dim, emb_dim) — full per-edge embeddings for every problem in the batch
         if problem_embedding is None:
@@ -122,14 +129,24 @@ class TSPActorNet(nn.Module):
         self,
         emb_dim=32,
         act_fn="silu",
+        n_gnn_feats=2,
+        use_k_sparse=True,
+        constraint_w_mean=(0.4, 0.9),
+        constraint_c_mean=(1.0, 3.0),
+        constraint_w_std=(0.1, 0.2),
+        constraint_c_std=(0.5, 1.0),
         **kwargs,
     ):
         super().__init__()
         self.emb_dim = emb_dim
         self.act_fn = act_fn
+        self.constraint_w_mean = constraint_w_mean
+        self.constraint_c_mean = constraint_c_mean
+        self.constraint_w_std = constraint_w_std
+        self.constraint_c_std = constraint_c_std
 
         # --- Backbone ---
-        self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn)
+        self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn, n_gnn_feats=n_gnn_feats, use_k_sparse=use_k_sparse)
 
         # --- Per-edge MLP heads ---
         # Input: [pos_e, vel_e, pbest_e, gbest_e] (4) + edge_emb (emb_dim) + particle_ctx (emb_dim)
@@ -191,12 +208,29 @@ class TSPActorNet(nn.Module):
         raw_sigma = self.edge_head_sigma(edge_input)  # (batch_size, n_particles, dim, 3)
 
         # Bounded outputs
-        w_mu = 0.4 + 0.5 * self.sigmoid(raw_mu[..., 0:1])  # [0.4, 0.9]
-        c1_mu = 1.0 + 2.0 * self.sigmoid(raw_mu[..., 1:2])  # [1.0, 3.0]
-        c2_mu = 1.0 + 2.0 * self.sigmoid(raw_mu[..., 2:3])  # [1.0, 3.0]
-        w_sig = 0.1 + 0.3 * self.sigmoid(raw_sigma[..., 0:1])  # [0.1, 0.4]
-        c1_sig = 0.2 + 0.8 * self.sigmoid(raw_sigma[..., 1:2])  # [0.2, 1.0]
-        c2_sig = 0.2 + 0.8 * self.sigmoid(raw_sigma[..., 2:3])  # [0.2, 1.0]
+        w_mu = self.sigmoid(raw_mu[..., 0:1])  # [0, 1]
+        w_sig = self.sigmoid(raw_sigma[..., 0:1])  # [0, 1]
+        if self.constraint_w_mean is not None:
+            w_min, w_max = self.constraint_w_mean
+            w_mu = w_min + (w_max - w_min) * w_mu  # [w_min, w_max]
+
+        if self.constraint_w_std is not None:
+            w_std_min, w_std_max = self.constraint_w_std
+            w_sig = w_std_min + (w_std_max - w_std_min) * w_sig  # [w_std_min, w_std_max]
+
+        c1_mu = self.sigmoid(raw_mu[..., 1:2])  # [0, 1]
+        c2_mu = self.sigmoid(raw_mu[..., 2:3])  # [0, 1]
+        if self.constraint_c_mean is not None:
+            c_min, c_max = self.constraint_c_mean
+            c1_mu = c_min + (c_max - c_min) * c1_mu  # [c1_min, c1_max]
+            c2_mu = c_min + (c_max - c_min) * c2_mu  # [c2_min, c2_max]
+        
+        c1_sig = self.sigmoid(raw_sigma[..., 1:2])  # [0, 1]
+        c2_sig = self.sigmoid(raw_sigma[..., 2:3])  # [0, 1]
+        if self.constraint_c_std is not None:
+            c_std_min, c_std_max = self.constraint_c_std
+            c1_sig = c_std_min + (c_std_max - c_std_min) * c1_sig  # [c_std_min, c_std_max]
+            c2_sig = c_std_min + (c_std_max - c_std_min) * c2_sig  # [c_std_min, c_std_max]
 
         wc1c2_mu = torch.cat([w_mu, c1_mu, c2_mu], dim=-1)  # (batch_size, n_particles, dim, 3)
         wc1c2_sigma = torch.cat(
@@ -209,12 +243,13 @@ class TSPCriticNet(nn.Module):
         self,
         emb_dim=32,
         act_fn="silu",
+        n_gnn_feats=2,
         **kwargs,
     ):
         super().__init__()
         # --- Backbone ---
-        self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn)
-        self.particle_value_head = MLP(
+        self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn, n_gnn_feats=n_gnn_feats)
+        self.population_value_head = MLP(
             units_list=[emb_dim*3, emb_dim, 1],
             act_fn=act_fn,
         )
@@ -250,5 +285,68 @@ class TSPCriticNet(nn.Module):
         edge_mean = tsp_embedding.mean(dim=1)
 
         state_repr = torch.cat([particle_mean, particle_max, edge_mean], dim=-1)  # (batch_size, 3*emb_dim)
-        values = self.particle_value_head(state_repr)
+        values = self.population_value_head(state_repr)
         return values
+
+class TSPCriticNetPerParticle(nn.Module):
+    def __init__(
+        self,
+        emb_dim=32,
+        act_fn="silu",
+        n_gnn_feats=2,
+        **kwargs,
+    ):
+        super().__init__()
+        # --- Backbone ---
+        self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn, n_gnn_feats=n_gnn_feats)
+        self.particle_value_head = MLP(
+            units_list=[emb_dim, 1],
+            act_fn=act_fn,
+        )
+
+    def get_problem_embedding(self, tsp_problem: TSPBatchProblem):
+        return self.backbone.get_problem_embedding(tsp_problem)
+
+
+    def forward(
+        self,
+        pos: torch.Tensor,
+        vel: torch.Tensor,
+        pbest: torch.Tensor,
+        gbest: torch.Tensor,
+        problem: TSPBatchProblem,
+        problem_embedding: torch.Tensor = None,
+    ):
+        """
+        Args:
+            pos, vel, pbest: (batch_size, n_particles, dim)
+            gbest: (batch_size, dim)
+            problem: TSPBatchProblem object (used when problem_embedding is None)
+            problem_embedding: pre-computed (batch_size, dim, emb_dim) — full per-edge embeddings
+        Returns:
+            values: (batch_size, n_particles) predicted value for each particle in the batch
+        """
+        particle_ctx, _ = self.backbone(
+            pos, vel, pbest, gbest, problem, problem_embedding
+        )  # (batch_size, n_particles, emb_dim)
+
+        values = self.particle_value_head(particle_ctx).squeeze(-1)  # (batch_size, n_particles)
+        return values
+
+
+class TSPVertexActorNet(nn.Module):
+    def __init__(
+            self,
+            emb_dim=32,
+            act_fn="silu",
+            n_gnn_feats=2,
+            **kwargs,
+        ):
+            super().__init__()
+            self.emb_dim = emb_dim
+            self.act_fn = act_fn
+    
+            # --- Backbone ---
+            self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn, n_gnn_feats=n_gnn_feats)
+    
+            

@@ -1,4 +1,5 @@
 import os
+import torch
 
 from ..utils import download_file_from_google_drive
 
@@ -13,7 +14,7 @@ class BaseProblem:
     def to(self, device):
         return self
 
-    def evaluate(self, solutions):
+    def evaluate(self, solutions) -> torch.Tensor:
         raise NotImplementedError("This method should be overridden by subclasses.")
 
     def local_search(self, solutions):

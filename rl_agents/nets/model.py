@@ -180,12 +180,12 @@ class ParticleVectorStem(nn.Module):
     def forward(self, *args, k_sparse=None) -> torch.Tensor:
         """
         Args:
-            pos, vel, pbest: torch tensors each with shape (n_particles, dim)
+            pos, vel, pbest: torch tensors each with shape (batch, n_particles, dim)
         Returns:
-            embeddings: torch tensor with shape (n_particles, emb_dim)
+            embeddings: torch tensor with shape (batch, n_particles, emb_dim)
         """
-        x = torch.stack(args, dim=-1)  # shape: (n_particles, dim, input_dim)
-        x = self.stem(x)  # shape: (n_particles, dim, emb_dim)
+        x = torch.stack(args, dim=-1)  # shape: (batch, n_particles, dim, input_dim)
+        x = self.stem(x)  # shape: (batch, n_particles, dim, emb_dim)
 
         if k_sparse is not None and k_sparse > 0:
             # Graph-aware hierarchical pooling:
@@ -237,6 +237,6 @@ class SwarmEncoder(nn.Module):
         h_gbest = self.gbest_stem(
             gbest.unsqueeze(1),
             k_sparse=k_sparse,
-        )  # (1, D)
+        )  # (batch_size, 1, D)
 
         return h_particles, h_gbest

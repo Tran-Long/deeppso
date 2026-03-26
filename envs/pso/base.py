@@ -1,6 +1,17 @@
 import torch
 
 from ..problems import BaseProblem
+from enum import Enum
+
+class RewardMode(str, Enum):
+    GREEDY = "greedy"
+    STOCHASTIC = "stochastic"
+    PBEST = "pbest"
+    GBEST = "gbest"
+    DELTA_GBEST = "delta_gbest" # clipped to 0
+    DELTA_GBEST_RAW = "delta_gbest_raw" # not clipped, can be negative
+    DELTA_PG = "delta_pg" # weighted delta_gbest + delta_pbest
+
 
 class BaseEnvPSOBatchProblem:
     def __init__(self, n_particles, batch_problem: BaseProblem, use_local_search: bool=False, auto_reset: bool=True, patience: int=5, **kwargs):
@@ -50,8 +61,12 @@ class BaseEnvPSOBatchProblem:
 
     def decode_solutions_eval(self):
         """Default: single decode + evaluate. Subclasses should override."""
+        # costs shape (batch_size, n_particles)
         solutions, costs = self.decode_solutions()
-        return solutions, costs
+        solutions_ls = self.problem.local_search(solutions)
+        costs_ls = self.problem.evaluate(solutions_ls)
+        mean_costs = costs # avg cost of each particle, by default set to equal to the best cost.
+        return solutions, costs, solutions_ls, costs_ls, mean_costs
 
     def reset(self, **kwargs):
         """

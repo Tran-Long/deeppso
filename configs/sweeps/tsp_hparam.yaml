@@ -15,23 +15,24 @@
 # --- Unique log version per sweep job ---
 # hydra:job.num is the 0-based index of the job within the sweep
 log:
-  version: "myopicS_base_${hydra:job.num}"
+  version: "vpg_base_${hydra:job.num}"
 
 # --- Joblib launcher configuration ---
 # Using single device per job to avoid DDP subprocess issues
 trainer:
-  devices: [2]
+  devices: [0]
   strategy: auto
 
 hydra:
   launcher:
-    n_jobs: 1              # Set -1 for all CPUs, adjust as needed
+    n_jobs: 2              # Set -1 for all CPUs, adjust as needed
 
   # --- Sweep grid -------------------------------------------------------
   # Each value is a comma-separated list; BasicSweeper creates the
   # Cartesian product of all lists below
   sweeper:
     params:
-      algorithms: myopic
-      +nc_nk_cases: nc20,nc50,nc100,nc200,nc500
+      +nc_nk_cases: nc50
+      algorithms: vpg
+      env.training_cfg.batch_size: 1,4
 

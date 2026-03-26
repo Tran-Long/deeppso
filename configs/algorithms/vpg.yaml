@@ -1,11 +1,11 @@
 # @package _global_
-# PPO algorithm configuration
+# VPG algorithm configuration
 # Intended to be composed with base config via defaults list
-# Override: python train.py +algorithms=ppo
+# Override: python train.py algorithms=vpg
 
 env:
   training_cfg:
-    batch_size: 16
+    batch_size: 2
 
 rl_agent:
   name: "TSPACAgent"
@@ -15,18 +15,14 @@ rl_agent:
     n_gnn_feats: 2
 
 rl_train:
-  name: "PPO"
+  name: "VPG"
   args:
     pso_iterations_train: 64
     pso_iterations_infer: 96
     use_gae: True
-    clip_coef: 0.2
-    clip_vloss: True
     entropy_coef: 0.01
     vf_coef: 0.5
     gae_lambda: 0.95
     gamma: 0.99
-    num_updates: 4
-    mini_batch_size: 64
     max_grad_norm: 1.0
     norm_adv: True

@@ -50,7 +50,7 @@ class PPO(BaseRLAlgorithm):
         all_obs_problems: list[BaseProblem] = [] 
         problem_cls = type(env.problem)
 
-        all_actions = torch.zeros((T, B, P, D, 3), device=self.device)  # (T, B, P, 3)
+        all_actions = torch.zeros((T, B, P, D, 3), device=self.device)  # (T, B, P, D, 3)
         all_log_probs = torch.zeros((T, B), device=self.device)  # (T, B)
         all_rewards = torch.zeros((T, B), device=self.device)  # (T, B)
         all_entropies = torch.zeros((T, B), device=self.device)  # (T, B)

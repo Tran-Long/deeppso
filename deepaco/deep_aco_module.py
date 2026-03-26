@@ -105,19 +105,25 @@ class DeepACOModule(L.LightningModule):
             baseline = costs.mean()
             best_sample_cost = torch.min(costs)
             best_aco_cost = aco.lowest_cost
-            self.eval_metrics[dataloader_idx] = self.eval_metrics.get(dataloader_idx, {"baseline": [], "sample_best": [], "aco_best": []})
+            best_aco_path = aco.shortest_path.view(1, 1, -1).cpu()
+            best_aco_path_ls = env.problem.local_search(best_aco_path)
+            best_aco_cost_ls = env.problem.evaluate(best_aco_path_ls).cpu()[0][0]
+            self.eval_metrics[dataloader_idx] = self.eval_metrics.get(dataloader_idx, {"baseline": [], "sample_best": [], "aco_best": [], "aco_best_ls": []})
             self.eval_metrics[dataloader_idx]["baseline"].append(baseline.cpu().item())
             self.eval_metrics[dataloader_idx]["sample_best"].append(best_sample_cost.cpu().item())
             self.eval_metrics[dataloader_idx]["aco_best"].append(best_aco_cost.cpu().item())
-    
+            self.eval_metrics[dataloader_idx]["aco_best_ls"].append(best_aco_cost_ls)
+
     def on_validation_epoch_end(self):
         for dataloader_idx in self.eval_metrics:
             avg_baseline = sum(self.eval_metrics[dataloader_idx]["baseline"]) / len(self.eval_metrics[dataloader_idx]["baseline"])
             avg_sample_best = sum(self.eval_metrics[dataloader_idx]["sample_best"]) / len(self.eval_metrics[dataloader_idx]["sample_best"])
             avg_aco_best = sum(self.eval_metrics[dataloader_idx]["aco_best"]) / len(self.eval_metrics[dataloader_idx]["aco_best"])
+            avg_aco_best_ls = sum(self.eval_metrics[dataloader_idx]["aco_best_ls"]) / len(self.eval_metrics[dataloader_idx]["aco_best_ls"])
             self.log(f"val_baseline/{self.val_idx2names.get(dataloader_idx, dataloader_idx)}", avg_baseline)
             self.log(f"val_sample_best/{self.val_idx2names.get(dataloader_idx, dataloader_idx)}", avg_sample_best)
             self.log(f"val_aco_best/{self.val_idx2names.get(dataloader_idx, dataloader_idx)}", avg_aco_best)
+            self.log(f"val_aco_best_ls/{self.val_idx2names.get(dataloader_idx, dataloader_idx)}", avg_aco_best_ls)
         self.eval_metrics = {}
 
 
@@ -136,19 +142,25 @@ class DeepACOModule(L.LightningModule):
             baseline = costs.mean()
             best_sample_cost = torch.min(costs)
             best_aco_cost = aco.lowest_cost
-            self.test_metrics[dataloader_idx] = self.test_metrics.get(dataloader_idx, {"baseline": [], "sample_best": [], "aco_best": []})
+            best_aco_path = aco.shortest_path.view(1, 1, -1).cpu()
+            best_aco_path_ls = env.problem.local_search(best_aco_path)
+            best_aco_cost_ls = env.problem.evaluate(best_aco_path_ls).cpu()[0][0]
+            self.test_metrics[dataloader_idx] = self.test_metrics.get(dataloader_idx, {"baseline": [], "sample_best": [], "aco_best": [], "aco_best_ls": []})
             self.test_metrics[dataloader_idx]["baseline"].append(baseline.cpu().item())
             self.test_metrics[dataloader_idx]["sample_best"].append(best_sample_cost.cpu().item())
             self.test_metrics[dataloader_idx]["aco_best"].append(best_aco_cost.cpu().item())
-    
+            self.test_metrics[dataloader_idx]["aco_best_ls"].append(best_aco_cost_ls)
+
     def on_test_epoch_end(self):
         for dataloader_idx in self.test_metrics:
             avg_baseline = sum(self.test_metrics[dataloader_idx]["baseline"]) / len(self.test_metrics[dataloader_idx]["baseline"])
             avg_sample_best = sum(self.test_metrics[dataloader_idx]["sample_best"]) / len(self.test_metrics[dataloader_idx]["sample_best"])
             avg_aco_best = sum(self.test_metrics[dataloader_idx]["aco_best"]) / len(self.test_metrics[dataloader_idx]["aco_best"])
+            avg_aco_best_ls = sum(self.test_metrics[dataloader_idx]["aco_best_ls"]) / len(self.test_metrics[dataloader_idx]["aco_best_ls"])
             self.log(f"test_baseline/{self.test_idx2names.get(dataloader_idx, dataloader_idx)}", avg_baseline)
             self.log(f"test_sample_best/{self.test_idx2names.get(dataloader_idx, dataloader_idx)}", avg_sample_best)
             self.log(f"test_aco_best/{self.test_idx2names.get(dataloader_idx, dataloader_idx)}", avg_aco_best)
+            self.log(f"test_aco_best_ls/{self.test_idx2names.get(dataloader_idx, dataloader_idx)}", avg_aco_best_ls)
         self.test_metrics = {}
 
 def reshape_batch(env, heu_vec, device):

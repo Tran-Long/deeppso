@@ -7,8 +7,9 @@
 #   python train.py -m +sweeps=tsp_hparam_modular +algorithms=ppo hydra/launcher=joblib
 
 defaults:
+  - _self_
   - base
-  - algorithms: ppo      # Default algorithm; override with +algorithms=<name>
+  - algorithms: ppo      # Default algorithm; override with 'override algorithms=<name>'
 
 # Override specific base settings if needed
 log:

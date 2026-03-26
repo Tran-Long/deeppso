@@ -4,7 +4,7 @@ import torch.distributions as dist
 from utils import timeit
 
 from ..problems import TSPBatchProblem
-from .base import BaseEnvPSOBatchProblem
+from .base import BaseEnvPSOBatchProblem, RewardMode
 
 
 class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
@@ -18,7 +18,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         self,
         n_particles: int,
         problem: TSPBatchProblem,
-        reward_mode="greedy",
+        reward_mode=RewardMode.GREEDY,
         train_n_starts=1,
         eval_n_starts=1,
         init_n_heuristic=0,
@@ -186,21 +186,21 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         self.cnt_patience = torch.where(improved, torch.zeros_like(self.cnt_patience, device=self.device), self.cnt_patience + 1)
         done = self.cnt_patience >= self.patience
 
-        if self.reward_mode == "stochastic":
+        if self.reward_mode == RewardMode.STOCHASTIC:
             _, stochastic_costs = self.decode_solutions(stochastic=True, temperature=temperature)
             reward = -stochastic_costs
-        elif self.reward_mode == "greedy":
+        elif self.reward_mode == RewardMode.GREEDY:
             used_costs = cost_ls if self.use_local_search else avg_costs
             reward = -used_costs  # (B, P)
-        elif self.reward_mode == "pbest":
+        elif self.reward_mode == RewardMode.PBEST:
             reward = -self.val_pbest  # (B, P)
-        elif self.reward_mode == "gbest":
+        elif self.reward_mode == RewardMode.GBEST:
             reward = -self.val_gbest  # (B,)
-        elif self.reward_mode == "delta_pg":
+        elif self.reward_mode == RewardMode.DELTA_PG:
             reward = delta_val_pbest + 0.5 * delta_val_gbest.unsqueeze(-1)  # (B, P)
-        elif self.reward_mode == "delta_g":
+        elif self.reward_mode == RewardMode.DELTA_GBEST:
             reward = torch.clamp(delta_val_gbest, min=0.0)  # (B,)
-        elif self.reward_mode == "delta_g_raw":
+        elif self.reward_mode == RewardMode.DELTA_GBEST_RAW:
             reward = delta_val_gbest  # (B,)
         else:
             raise ValueError(f"Invalid reward_mode: {self.reward_mode}")
@@ -404,3 +404,41 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         best_paths_ls = self.problem.local_search(best_paths)
         best_costs_ls = self.problem.evaluate(best_paths_ls)
         return best_paths, best_costs, best_paths_ls, best_costs_ls, mean_costs
+
+
+class TSPEnvVectorVertex(TSPEnvVectorEdgeBatch):
+    def __init__(
+        self,
+        n_particles: int,
+        problem: TSPBatchProblem,
+        reward_mode=RewardMode.GREEDY,
+        init_n_heuristic=0,
+        patience=5,
+        auto_reset=True,
+        use_local_search=False,
+    ):
+        super().__init__(
+            n_particles,
+            problem,
+            reward_mode,
+            init_n_heuristic=init_n_heuristic,
+            patience=patience,
+            auto_reset=auto_reset,
+            use_local_search=use_local_search,
+        )
+        self.dim = self.n_cities
+    
+
+    def decode_solutions(self, stochastic = True, start = None, temperature = 1):
+        solutions = self.population.argsort(dim=-1)  # (batch_size, n_particles, n_cities)
+        costs = self.problem.evaluate(solutions)
+        return solutions, costs
+
+    def decode_solutions_eval(self):
+        solutions = self.population.argsort(dim=-1)  # (batch_size, n_particles, n_cities)
+        costs = self.problem.evaluate(solutions)
+
+        # Local search on best paths
+        best_paths_ls = self.problem.local_search(solutions)
+        best_costs_ls = self.problem.evaluate(best_paths_ls)
+        return solutions, costs, best_paths_ls, best_costs_ls, costs

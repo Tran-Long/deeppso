@@ -1,1 +1,1 @@
-from .tsp_net import TSPActorNet, TSPCriticNet
+from .tsp_net import TSPActorNet, TSPCriticNet, TSPCriticNetPerParticle

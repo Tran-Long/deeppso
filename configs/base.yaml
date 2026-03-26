@@ -25,16 +25,16 @@ env:
     auto_reset: True
     patience: 10
     reward_mode: "greedy"
-    n_cities: [20, 50]
-    k_sparse: [5, 10]
+    n_cities: 20
+    k_sparse: 5
     mode: "range"
     steps_per_epoch: 64
   
   validation_cfg:
     batch_size: 16
     auto_reset: False
-    n_cities: [20, 50]
-    k_sparse: [5, 10]
+    n_cities: 20
+    k_sparse: 5
     mode: "choice"
     random_include: False
     random_size: 100
@@ -43,8 +43,8 @@ env:
     enable: True
     batch_size: 16
     auto_reset: False
-    n_cities: [20, 50, 100]
-    k_sparse: [5, 10, 20]
+    n_cities: 20
+    k_sparse: 5
     mode: "choice"
     random_include: False
     random_size: 1280

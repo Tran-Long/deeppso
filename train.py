@@ -5,12 +5,11 @@ from lightning.pytorch import loggers as pl_loggers
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBar
 from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
-from lightning.pytorch.callbacks import DeviceStatsMonitor
 
 from envs import EnvDataModule
 from logger import CustomLogger
 from rl_agents import TSPAgent, TSPACAgent
-from rl_algorithms import REINFORCE, Myopic, MyopicI, PPO
+from rl_algorithms import REINFORCE, Myopic, MyopicI, PPO, VPG
 
 _MODULE_REGISTRY = {
     "TSPAgent": TSPAgent,
@@ -20,6 +19,7 @@ _MODULE_REGISTRY = {
     "MyopicI": MyopicI,
     "REINFORCE": REINFORCE,
     "PPO": PPO,
+    "VPG": VPG,
 }
 
 
@@ -124,7 +124,7 @@ def main(cfg: DictConfig) -> None:
         **config["log"],
     )
     custom_logger = CustomLogger(log_folder=tensorboard_logger.log_dir)
-    callbacks = [GradientNormLogger(), DeviceStatsMonitor()]
+    callbacks = [GradientNormLogger()]
     enable_test = config["env"]["test_cfg"].get("enable", False)
     if enable_test:
         callbacks.append(PeriodicTestCallback())

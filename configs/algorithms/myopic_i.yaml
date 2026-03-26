@@ -8,6 +8,7 @@ rl_agent:
   args:
     emb_dim: 32
     act_fn: "silu"
+    n_gnn_feats: 2
 
 rl_train:
   name: "MyopicI"
