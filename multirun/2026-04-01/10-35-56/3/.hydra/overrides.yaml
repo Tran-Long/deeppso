@@ -1,5 +1,0 @@
-- problem=tsp
-- nc_nk_cases=tsp_nc100
-- algorithms=myopic_i
-- +pso_update=raw_update
-- +sweeps=hparams

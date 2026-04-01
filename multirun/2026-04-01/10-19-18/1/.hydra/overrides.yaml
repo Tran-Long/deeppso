@@ -1,6 +1,0 @@
-- problem=tsp
-- nc_nk_cases=tsp_nc50
-- algorithms=vpg
-- +pso_update=random_update
-- env.training_cfg.reward_mode=delta_pbest
-- +sweeps=hparams
