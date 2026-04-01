@@ -7,3 +7,5 @@ logs
 data
 temp.ipynb
 test.ipynb
+outputs
+multirun
