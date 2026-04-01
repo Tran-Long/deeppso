@@ -48,18 +48,22 @@ def get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode) -> dict[int, int]:
 class TSPBatchProblem(BaseProblem):
     DATA_FOLDER = Path(__file__).parents[1] / 'data' / 'tsp'
     GOOGLE_SHARED_ID = "1bAoMCVDNl_42rdRy1YlwSAvLYeiSdami"
-    def __init__(self, n_cities, k_sparse, batch_size, n_dims=2, mode="range", **kwargs):
+    def __init__(self, n_cities, k_sparse, batch_size, n_dims=2, mode="range", fix_start=False, **kwargs):
         super().__init__(**kwargs)
         self.batch_size = batch_size
         self.n_cities_k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
         self.n_cities = random.choice(list(self.n_cities_k_sparse_mapping.keys()))
         self.k_sparse = self.n_cities_k_sparse_mapping[self.n_cities]
         self.n_dims = n_dims
+        self.fix_start = fix_start
 
         self.set_coordinates()
 
     def set_coordinates(self, coordinates: torch.Tensor = None):
         self.coordinates = coordinates.to(self.device) if coordinates is not None else torch.rand(self.batch_size, self.n_cities, self.n_dims).to(self.device)
+        if self.fix_start:
+            self.coordinates = torch.index_select(self.coordinates, 1, torch.randperm(self.n_cities, device=self.device))
+            self.coordinates = self.coordinates - self.coordinates[:, :1, :] + 0.5  # Shift so that the first city is at the origin (0.5, 0.5)
         self.distance_matrix = torch.norm(self.coordinates[:, :, None] - self.coordinates[:, None, :], dim=3, p=2)
         self.distance_matrix[torch.arange(self.batch_size, device=self.device)[:, None], torch.arange(self.n_cities, device=self.device), torch.arange(self.n_cities, device=self.device)] = 1e9
         
@@ -115,7 +119,7 @@ class TSPBatchProblem(BaseProblem):
         return torch.sum(self.distance_matrix[batch_indices, u, v], dim=2)
         
     @classmethod
-    def get_val_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", random_include=True, random_size=100, n_dims=2, **kwargs) -> dict[str, list]:
+    def get_val_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", fix_start=False, random_include=True, random_size=100, n_dims=2, **kwargs) -> dict[str, list]:
         val_datasets_dict = {}
         n_cities2k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
         print(f">>> n_cities to k_sparse mapping for TSP validation datasets: {n_cities2k_sparse_mapping}")
@@ -132,7 +136,7 @@ class TSPBatchProblem(BaseProblem):
                 val_tensor = torch.load(val_file)[:random_size]
                 for i in range(0, val_tensor.size(0), batch_size):
                     batch_coordinates = val_tensor[i:i+batch_size].to(torch.float)
-                    problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_coordinates.shape[0], mode=mode, n_dims=n_dims)
+                    problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_coordinates.shape[0], mode=mode, fix_start=fix_start, n_dims=n_dims)
                     problem_instance.set_coordinates(batch_coordinates)
                     val_datasets_dict[f"{n_cities_file}_file"].append(problem_instance)
         need_random = []
@@ -145,14 +149,14 @@ class TSPBatchProblem(BaseProblem):
 
         for n_ct in need_random:
             k_sparse = n_cities2k_sparse_mapping.get(n_ct, n_ct)
-            val_datasets_dict[f"{n_ct}_random"] = [cls(n_cities=n_ct, k_sparse=k_sparse, batch_size=batch_size, mode=mode, n_dims=n_dims) for _ in range(random_size // batch_size + (1 if random_size % batch_size > 0 else 0))]
+            val_datasets_dict[f"{n_ct}_random"] = [cls(n_cities=n_ct, k_sparse=k_sparse, batch_size=batch_size, mode=mode, fix_start=fix_start, n_dims=n_dims) for _ in range(random_size // batch_size + (1 if random_size % batch_size > 0 else 0))]
         print(f">>> Validation datasets for TSP prepared:")
         for name, datasets in val_datasets_dict.items():
             print(f"    - {name}: {len(datasets)} instances")
         return val_datasets_dict
     
     @classmethod
-    def get_test_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", random_include=True, random_size=100, n_dims=2, **kwargs) -> dict[str, list]:
+    def get_test_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", fix_start=False, random_include=True, random_size=100, n_dims=2, **kwargs) -> dict[str, list]:
         test_datasets_dict = {}
         n_cities2k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
         all_n_cities = list(set(n_cities2k_sparse_mapping.keys()))
@@ -175,7 +179,7 @@ class TSPBatchProblem(BaseProblem):
                         ).float()
                         batch_coordinates.append(coords)
                     batch_coordinates = torch.stack(batch_coordinates)
-                    problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_coordinates.shape[0], mode=mode, n_dims=n_dims)
+                    problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_coordinates.shape[0], mode=mode, fix_start=fix_start, n_dims=n_dims)
                     problem_instance.set_coordinates(batch_coordinates)
                     test_datasets_dict[f"{n_cities_file}_file"].append(problem_instance)
 
@@ -189,7 +193,7 @@ class TSPBatchProblem(BaseProblem):
 
         for n_ct in need_random:
             k_sparse = n_cities2k_sparse_mapping.get(n_ct, n_ct)
-            test_datasets_dict[f"{n_ct}_random"] = [cls(n_cities=n_ct, k_sparse=k_sparse, batch_size=batch_size, mode=mode, n_dims=n_dims) for _ in range(random_size // batch_size + (1 if random_size % batch_size > 0 else 0))]
+            test_datasets_dict[f"{n_ct}_random"] = [cls(n_cities=n_ct, k_sparse=k_sparse, batch_size=batch_size, mode=mode, fix_start=fix_start, n_dims=n_dims) for _ in range(random_size // batch_size + (1 if random_size % batch_size > 0 else 0))]
         print(f">>> Test datasets for TSP prepared:")
         for name, datasets in test_datasets_dict.items():
             print(f"    - {name}: {len(datasets)} instances")
@@ -219,7 +223,7 @@ class TSPBatchProblem(BaseProblem):
         n_dims = instances[0].n_dims
         coordinates = torch.cat([instance.coordinates for instance in instances], dim=0)
         batch_size = coordinates.shape[0]
-        batched_problem = cls(n_cities=n_cities, k_sparse=k_sparse, batch_size=batch_size, mode="choice", n_dims=n_dims)
+        batched_problem = cls(n_cities=n_cities, k_sparse=k_sparse, batch_size=batch_size, mode="choice", fix_start=instances[0].fix_start, n_dims=n_dims)
         batched_problem.set_coordinates(coordinates)
         return batched_problem
 
@@ -231,7 +235,7 @@ class TSPBatchProblem(BaseProblem):
         n_dims = batch_instance.n_dims
         unbatched_problems = []
         for i in range(batch_size):
-            instance = cls(n_cities=n_cities, k_sparse=k_sparse, batch_size=1, mode="choice", n_dims=n_dims)
+            instance = cls(n_cities=n_cities, k_sparse=k_sparse, batch_size=1, mode="choice", fix_start=batch_instance.fix_start, n_dims=n_dims)
             instance.set_coordinates(batch_instance.coordinates[i:i+1])
             unbatched_problems.append(instance)
         return unbatched_problems

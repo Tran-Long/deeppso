@@ -1,0 +1,71 @@
+trainer:
+  max_epochs: 20
+  val_check_interval: 1.0
+  accelerator: auto
+  devices:
+  - 0
+  num_sanity_val_steps: 0
+  log_every_n_steps: 32
+  strategy: auto
+problem:
+  env:
+    problem_sig: tsp
+    n_particles: 64
+    n_dims: 2
+    eval_n_starts: 0.1
+    init_n_heuristic: 0
+    do_normalize: false
+    training_cfg:
+      batch_size: 8
+      auto_reset: true
+      patience: 10
+      reward_mode: greedy
+      n_cities: 20
+      k_sparse: 5
+      mode: range
+      steps_per_epoch: 64
+    validation_cfg:
+      batch_size: 16
+      auto_reset: false
+      n_cities: 20
+      k_sparse: 5
+      mode: choice
+      random_include: false
+      random_size: 100
+    test_cfg:
+      enable: true
+      batch_size: 16
+      auto_reset: false
+      n_cities: 20
+      k_sparse: 5
+      mode: choice
+      random_include: false
+      random_size: 1280
+  log:
+    save_dir: ./logs
+    name: tsp
+    version: default
+env:
+  test_cfg:
+    batch_size: 32
+    k_sparse: 5
+    n_cities: 20
+  training_cfg:
+    batch_size: 16
+    k_sparse: 5
+    n_cities: 20
+  validation_cfg:
+    batch_size: 32
+    k_sparse: 5
+    n_cities: 20
+rl_agent:
+  name: TSPAgent
+  args:
+    emb_dim: 32
+    act_fn: silu
+    n_gnn_feats: 2
+rl_train:
+  name: MyopicI
+  args:
+    pso_iterations_train: 64
+    pso_iterations_infer: 96

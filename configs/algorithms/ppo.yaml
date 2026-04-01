@@ -12,7 +12,6 @@ rl_agent:
   args:
     emb_dim: 64
     act_fn: "silu"
-    n_gnn_feats: 2
 
 rl_train:
   name: "PPO"

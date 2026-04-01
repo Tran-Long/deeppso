@@ -1,0 +1,12 @@
+# @package _global_
+
+rl_agent:
+  args:
+    constraint_w_mean: [0.4, 0.9]
+    constraint_c_mean: [1.0, 3.0]
+    constraint_w_std: [0.1, 0.2]
+    constraint_c_std: [0.5, 1.0]
+
+rl_train:
+  args:
+    pso_using_random: True

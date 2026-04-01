@@ -1,0 +1,6 @@
+- problem=tsp
+- nc_nk_cases=nc50
+- algorithms=vpg
+- +pso_update=random_update
+- env.training_cfg.reward_mode=greedy
+- +sweeps=hparams

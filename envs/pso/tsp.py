@@ -4,10 +4,10 @@ import torch.distributions as dist
 from utils import timeit
 
 from ..problems import TSPBatchProblem
-from .base import BaseEnvPSOBatchProblem, RewardMode
+from .base import BaseEnv, RewardMode
 
 
-class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
+class TSPEnv(BaseEnv):
     """
     Each particle is represented as a continuous vector of size n_cities.
     Values in the vector are in range [0, 1], representing the priority of visiting each city.
@@ -25,12 +25,14 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         patience=5,
         auto_reset=True,
         use_local_search=False,
+        do_normalize=False,
         **kwargs,
     ):
-        super().__init__(n_particles, problem, use_local_search, auto_reset, patience)
+        super().__init__(n_particles, problem, use_local_search, auto_reset, patience, do_normalize=do_normalize)
         self.n_cities = problem.n_cities
         self.k_sparse = problem.k_sparse
-        self.dim = self.n_cities * self.k_sparse
+        self.fix_start = problem.fix_start
+        self.dim = self.n_cities * self.k_sparse if not self.fix_start else self.n_cities - 1
         self.reward_mode = reward_mode
 
         if init_n_heuristic is None:
@@ -180,14 +182,20 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         # Get deterministic cost for metadata update
         _, costs, _, cost_ls, avg_costs = self.decode_solutions_eval()
         delta_val_pbest, delta_val_gbest = self.update_metadata(costs, cost_ls)
-        
+
         # Update patience counter for early stopping
-        improved = (delta_val_gbest > 0)  # (batch_size, )
-        self.cnt_patience = torch.where(improved, torch.zeros_like(self.cnt_patience, device=self.device), self.cnt_patience + 1)
+        improved = delta_val_gbest > 0  # (batch_size, )
+        self.cnt_patience = torch.where(
+            improved,
+            torch.zeros_like(self.cnt_patience, device=self.device),
+            self.cnt_patience + 1,
+        )
         done = self.cnt_patience >= self.patience
 
         if self.reward_mode == RewardMode.STOCHASTIC:
-            _, stochastic_costs = self.decode_solutions(stochastic=True, temperature=temperature)
+            _, stochastic_costs = self.decode_solutions(
+                stochastic=True, temperature=temperature
+            )
             reward = -stochastic_costs
         elif self.reward_mode == RewardMode.GREEDY:
             used_costs = cost_ls if self.use_local_search else avg_costs
@@ -202,6 +210,10 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             reward = torch.clamp(delta_val_gbest, min=0.0)  # (B,)
         elif self.reward_mode == RewardMode.DELTA_GBEST_RAW:
             reward = delta_val_gbest  # (B,)
+        elif self.reward_mode == RewardMode.DELTA_PBEST:
+            reward = torch.clamp(delta_val_pbest, min=0.0)  # (B, P)
+        elif self.reward_mode == RewardMode.DELTA_PBEST_RAW:
+            reward = delta_val_pbest  # (B, P)
         else:
             raise ValueError(f"Invalid reward_mode: {self.reward_mode}")
 
@@ -257,12 +269,28 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             paths: (batch_size, n_particles, n_cities)
             costs: (batch_size, n_particles)
         """
+                
+
         device = self.population.device
         B = self.batch_size
         P = self.n_particles
         N = self.n_cities
         k = self.k_sparse
         BP = B * P
+
+        if self.fix_start:
+            if start is None:
+                start = torch.zeros((BP,), dtype=torch.long, device=device)  # All particles start at city 0
+            else:
+                start = start.to(device).flatten()
+                assert start.shape == (BP,)
+                assert (start == 0).all(), "All start cities must be 0 when fix_start is True"
+            solutions = self.population.view(B, P, N-1).argsort(dim=-1, descending=True)  # (batch_size, n_particles, n_cities - 1)
+            # Insert the fixed start city (0) at the beginning of each tour
+            zeros = torch.zeros((B, P, 1), dtype=torch.long, device=device)
+            solutions = torch.cat([zeros, solutions], dim=-1)  # (B, P, N)
+            costs = self.problem.evaluate(solutions)
+            return solutions, costs
 
         # --- Sparse lookup tables: avoids O(B*P*N²) dense mat ---
         # edge_index: (2, B*N*k), edges ordered by src within each batch block
@@ -355,6 +383,13 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
             best_paths: (batch_size, n_particles, n_cities)
             best_costs: (batch_size, n_particles)
         """
+        if self.fix_start:
+            # If start is fixed, just call decode_solutions with the fixed start
+            paths, costs = self.decode_solutions()
+            paths_ls = self.problem.local_search(paths)
+            costs_ls = self.problem.evaluate(paths_ls)
+            return paths, costs, paths_ls, costs_ls, costs
+
         n_starts = self.eval_n_starts
         # Generate random starts: (batch_size, n_particles, n_starts)
         starts = torch.rand(self.batch_size, self.n_particles, self.n_cities).argsort(
@@ -406,7 +441,7 @@ class TSPEnvVectorEdgeBatch(BaseEnvPSOBatchProblem):
         return best_paths, best_costs, best_paths_ls, best_costs_ls, mean_costs
 
 
-class TSPEnvVectorVertex(TSPEnvVectorEdgeBatch):
+class TSPEnvVectorVertex(TSPEnv):
     def __init__(
         self,
         n_particles: int,
@@ -416,6 +451,7 @@ class TSPEnvVectorVertex(TSPEnvVectorEdgeBatch):
         patience=5,
         auto_reset=True,
         use_local_search=False,
+        **kwargs,
     ):
         super().__init__(
             n_particles,
@@ -427,15 +463,18 @@ class TSPEnvVectorVertex(TSPEnvVectorEdgeBatch):
             use_local_search=use_local_search,
         )
         self.dim = self.n_cities
-    
 
-    def decode_solutions(self, stochastic = True, start = None, temperature = 1):
-        solutions = self.population.argsort(dim=-1)  # (batch_size, n_particles, n_cities)
+    def decode_solutions(self, stochastic=True, start=None, temperature=1):
+        solutions = self.population.argsort(
+            dim=-1
+        )  # (batch_size, n_particles, n_cities)
         costs = self.problem.evaluate(solutions)
         return solutions, costs
 
     def decode_solutions_eval(self):
-        solutions = self.population.argsort(dim=-1)  # (batch_size, n_particles, n_cities)
+        solutions = self.population.argsort(
+            dim=-1
+        )  # (batch_size, n_particles, n_cities)
         costs = self.problem.evaluate(solutions)
 
         # Local search on best paths

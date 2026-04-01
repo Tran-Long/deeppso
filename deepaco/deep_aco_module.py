@@ -1,9 +1,11 @@
 import pytorch_lightning as L
 import torch
 
+from envs.pso import CVRPEnv, TSPEnv, BaseEnv
+
+from .aco_cvrp import ACO as ACOCVRP
 from .aco_net import Net as ACOGraphNet
-from envs.pso import TSPEnvVectorEdgeBatch
-from .aco import ACO
+from .aco_tsp import ACO as ACOTSP
 
 
 class DeepACOModule(L.LightningModule):
@@ -13,6 +15,7 @@ class DeepACOModule(L.LightningModule):
         n_ants: int | tuple[int, int] | list[int],
         mode: str = "range",
         aco_iterations_infer: int = 20,
+        n_gnn_feats: int = 2,
         **kwargs,
     ):
         super().__init__()
@@ -59,7 +62,7 @@ class DeepACOModule(L.LightningModule):
         self.aco_iterations_infer = aco_iterations_infer
 
         self.automatic_optimization = False
-        self.net = ACOGraphNet()
+        self.net = ACOGraphNet(n_gnn_feats=n_gnn_feats)
         self.eval_metrics = {}
         self.val_idx2names = {}
         self.test_metrics = {}
@@ -69,17 +72,25 @@ class DeepACOModule(L.LightningModule):
         optimizer = torch.optim.Adam(self.net.parameters(), lr=3e-4)
         return optimizer
 
-    def training_step(self, env: TSPEnvVectorEdgeBatch, idx):
+    def training_step(self, env: TSPEnv, idx):
         assert env.batch_size == 1
         heu_vec = self.net(env.problem.pyg_data.to(self.device))
         heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
-
-        aco = ACO(
-            n_ants=self.n_cities2n_ants[env.problem.n_cities],
-            heuristic=heu_mat,
-            distances=env.problem.distance_matrix[0],
-            device=self.device,
-        )
+        if isinstance(env, TSPEnv):
+            aco = ACOTSP(
+                n_ants=self.n_cities2n_ants[env.problem.n_cities],
+                heuristic=heu_mat,
+                distances=env.problem.distance_matrix[0],
+                device=self.device,
+            )
+        elif isinstance(env, CVRPEnv):
+            aco = ACOCVRP(
+                n_ants=self.n_cities2n_ants[env.problem.n_cities - 1],  # CVRP has n_cities-1 customer nodes excluding depot
+                heuristic=heu_mat,
+                distances=env.problem.distance_matrix[0],
+                demand=env.problem.demands.view(-1),
+                device=self.device,
+            )
         opt = self.optimizers()
         costs, log_probs = aco.sample()
         baseline = costs.mean()
@@ -88,18 +99,29 @@ class DeepACOModule(L.LightningModule):
         opt.zero_grad()
         self.manual_backward(reinforce_loss)
         self.log("train_loss", reinforce_loss, batch_size=1)
+        self.log("costs", costs.mean(), prog_bar=True, batch_size=1)
         opt.step()
 
-    def validation_step(self, env: TSPEnvVectorEdgeBatch, idx, dataloader_idx=0):
-        heu_vec = self.net(env.problem.pyg_data.to(self.device)).reshape(env.batch_size, -1)
-        heu_mats = reshape_batch(env, heu_vec, self.device) + 1e-9
-        for i, heu_mat in enumerate(heu_mats):
-            aco = ACO(
-                n_ants=self.n_cities2n_ants[env.problem.n_cities],
-                heuristic=heu_mat,
-                distances=env.problem.distance_matrix[i],
-                device=self.device
-            )
+    def validation_step(self, env: TSPEnv, idx, dataloader_idx=0):
+        heu_vecs = self.net(env.problem.pyg_data.to(self.device)).reshape(env.batch_size, -1)
+        for i, heu_vec in enumerate(heu_vecs):
+            if isinstance(env, TSPEnv):
+                heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
+                aco = ACOTSP(
+                    n_ants=self.n_cities2n_ants[env.problem.n_cities],
+                    heuristic=heu_mat,
+                    distances=env.problem.distance_matrix[i],
+                    device=self.device
+                )
+            elif isinstance(env, CVRPEnv):
+                heu_mat = heu_vec.reshape((env.n_cities, env.n_cities)) + 1e-9
+                aco = ACOCVRP(
+                    n_ants=self.n_cities2n_ants[env.problem.n_cities - 1],  # CVRP has n_cities-1 customer nodes excluding depot
+                    heuristic=heu_mat,
+                    distances=env.problem.distance_matrix[i],
+                    demand=env.problem.demands[i].view(-1),
+                    device=self.device
+                )
             costs, _ = aco.sample()
             aco.run(n_iterations=self.aco_iterations_infer)
             baseline = costs.mean()
@@ -127,16 +149,26 @@ class DeepACOModule(L.LightningModule):
         self.eval_metrics = {}
 
 
-    def test_step(self, env: TSPEnvVectorEdgeBatch, idx, dataloader_idx=0):
-        heu_vec = self.net(env.problem.pyg_data.to(self.device)).reshape(env.batch_size, -1)
-        heu_mats = reshape_batch(env, heu_vec, self.device) + 1e-9
-        for i, heu_mat in enumerate(heu_mats):
-            aco = ACO(
-                n_ants=self.n_cities2n_ants[env.problem.n_cities],
-                heuristic=heu_mat,
-                distances=env.problem.distance_matrix[i],
-                device=self.device
-            )
+    def test_step(self, env: TSPEnv, idx, dataloader_idx=0):
+        heu_vecs = self.net(env.problem.pyg_data.to(self.device)).reshape(env.batch_size, -1)
+        for i, heu_vec in enumerate(heu_vecs):
+            if isinstance(env, TSPEnv):
+                heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
+                aco = ACOTSP(
+                    n_ants=self.n_cities2n_ants[env.problem.n_cities],
+                    heuristic=heu_mat,
+                    distances=env.problem.distance_matrix[i],
+                    device=self.device
+                )
+            elif isinstance(env, CVRPEnv):
+                heu_mat = heu_vec.reshape((env.n_cities, env.n_cities)) + 1e-9
+                aco = ACOCVRP(
+                    n_ants=self.n_cities2n_ants[env.problem.n_cities - 1],
+                    heuristic=heu_mat,
+                    distances=env.problem.distance_matrix[i],
+                    demand=env.problem.demands[i].view(-1),
+                    device=self.device
+                )
             costs, _ = aco.sample()
             aco.run(n_iterations=self.aco_iterations_infer)
             baseline = costs.mean()

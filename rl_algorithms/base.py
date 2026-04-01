@@ -1,7 +1,7 @@
 import pytorch_lightning as L
 import torch
 
-from envs import BaseEnvPSOBatchProblem
+from envs import BaseEnv
 from logger import CustomLogger
 from rl_agents import BaseAgent
 from utils import timeit
@@ -36,7 +36,9 @@ class BaseRLAlgorithm(L.LightningModule):
             {}
         )  # To be set by EnvDataModule for logging purposes
         self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
-        self.test_dataloader_idx2name = {}  # To be set by EnvDataModule for logging purposes
+        self.test_dataloader_idx2name = (
+            {}
+        )  # To be set by EnvDataModule for logging purposes
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.agent.parameters(), lr=3e-4)
@@ -47,20 +49,24 @@ class BaseRLAlgorithm(L.LightningModule):
             "optimizer": optimizer,
             # "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
         }
-    
+
     def transfer_batch_to_device(self, batch, device, dataloader_idx):
-        if isinstance(batch, BaseEnvPSOBatchProblem):
+        if isinstance(batch, BaseEnv):
             # move all tensors in your custom data structure to the device
             batch = batch.to(device)
         else:
             batch = super().transfer_batch_to_device(batch, device, dataloader_idx)
         return batch
 
-    def training_step(self, env: BaseEnvPSOBatchProblem, idx):
-        raise NotImplementedError("Training step not implemented yet. Focus is on validation loop for now.")
+    def training_step(self, env: BaseEnv, idx):
+        raise NotImplementedError(
+            "Training step not implemented yet. Focus is on validation loop for now."
+        )
 
-    def validation_step(self, env: BaseEnvPSOBatchProblem, idx, dataloader_idx=0):
-        assert env.auto_reset == False, "Validation env should have auto_reset=False to evaluate final performance after patience runs out."
+    def validation_step(self, env: BaseEnv, idx, dataloader_idx=0):
+        assert (
+            env.auto_reset == False
+        ), "Validation env should have auto_reset=False to evaluate final performance after patience runs out."
         observations, _ = env.reset()
 
         self.val_gbest_dataloader["initial"][dataloader_idx] = (
@@ -69,7 +75,9 @@ class BaseRLAlgorithm(L.LightningModule):
         )
 
         # 2. GNN embeddings (single forward pass for all graphs via PyG Batch)
-        problem_embeddings = self.agent.get_problem_embedding(env.problem)  # (B, dim, emb_dim)
+        problem_embeddings = self.agent.get_problem_embedding(
+            env.problem
+        )  # (B, dim, emb_dim)
 
         # 3. PSO loop
         for pso_idx in range(self.pso_iterations_infer):
@@ -112,9 +120,11 @@ class BaseRLAlgorithm(L.LightningModule):
 
         self.custom_logger.save_population_stats()
 
-    def test_step(self, env: BaseEnvPSOBatchProblem, idx, dataloader_idx=0):
+    def test_step(self, env: BaseEnv, idx, dataloader_idx=0):
         # Same as validation step but logs to test_dataloader_idx2name and saves test gbest results separately
-        assert env.auto_reset == False, "Test env should have auto_reset=False to evaluate final performance after patience runs out."
+        assert (
+            env.auto_reset == False
+        ), "Test env should have auto_reset=False to evaluate final performance after patience runs out."
         observations, _ = env.reset()
 
         self.test_gbest_dataloader["initial"][dataloader_idx] = (
@@ -123,7 +133,9 @@ class BaseRLAlgorithm(L.LightningModule):
         )
 
         # 2. GNN embeddings (single forward pass for all graphs via PyG Batch)
-        problem_embeddings = self.agent.get_problem_embedding(env.problem)  # (B, dim, emb_dim)
+        problem_embeddings = self.agent.get_problem_embedding(
+            env.problem
+        )  # (B, dim, emb_dim)
 
         # 3. PSO loop
         for pso_idx in range(self.pso_iterations_infer):
@@ -150,7 +162,7 @@ class BaseRLAlgorithm(L.LightningModule):
             self.test_gbest_dataloader["wc1c2_ls"].get(dataloader_idx, [])
             + env.val_gbest_ls.tolist()
         )
-    
+
     def on_test_epoch_end(self):
         for key in self.test_gbest_dataloader.keys():
             for dataloader_idx in self.test_gbest_dataloader[key].keys():

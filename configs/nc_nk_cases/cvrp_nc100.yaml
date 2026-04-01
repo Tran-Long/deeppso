@@ -1,0 +1,12 @@
+# @package _global_
+env:
+  n_particles: 128
+  test_cfg:
+    batch_size: 1
+    n_cities: 100
+  training_cfg:
+    batch_size: 4
+    n_cities: 100
+  validation_cfg:
+    batch_size: 8
+    n_cities: 100

@@ -5,34 +5,36 @@
 # Works with any algorithm composed from the algorithms/ directory
 #
 # Usage:
-#   python train.py -m +sweeps=tsp_hparam_modular hydra/launcher=joblib
-#   python train.py -m +sweeps=tsp_hparam_modular +algorithms=ppo hydra/launcher=joblib
-#   python train.py -m +sweeps=tsp_hparam_modular +algorithms=reinforce hydra/launcher=joblib hydra.launcher.n_jobs=4
+#   python train.py -m +sweeps=hparams hydra/launcher=joblib
+#   python train.py -m +sweeps=hparams +algorithms=ppo hydra/launcher=joblib
+#   python train.py -m +sweeps=hparams +algorithms=reinforce hydra/launcher=joblib hydra.launcher.n_jobs=4
 #
 # Add extra overrides on top of this sweep:
-#   python train.py -m +sweeps=tsp_hparam_modular trainer.max_epochs=30 hydra/launcher=joblib
+#   python train.py -m +sweeps=hparams trainer.max_epochs=30 hydra/launcher=joblib
 
 # --- Unique log version per sweep job ---
 # hydra:job.num is the 0-based index of the job within the sweep
 log:
-  version: "vpg_base_${hydra:job.num}"
+  version: "temp_${hydra:job.num}"
 
 # --- Joblib launcher configuration ---
 # Using single device per job to avoid DDP subprocess issues
 trainer:
-  devices: [0]
+  devices: [1]
   strategy: auto
 
 hydra:
   launcher:
-    n_jobs: 2              # Set -1 for all CPUs, adjust as needed
+    n_jobs: 3              # Set -1 for all CPUs, adjust as needed
 
   # --- Sweep grid -------------------------------------------------------
   # Each value is a comma-separated list; BasicSweeper creates the
   # Cartesian product of all lists below
   sweeper:
     params:
-      +nc_nk_cases: nc50
-      algorithms: vpg
-      env.training_cfg.batch_size: 1,4
+      problem: tsp
+      nc_nk_cases: tsp_nc100
+      algorithms: vpg,myopic_i
+      +pso_update: random_update,raw_update
+      # env.training_cfg.reward_mode: greedy,delta_pbest,delta_pbest_raw
 

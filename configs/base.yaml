@@ -19,6 +19,7 @@ env:
   n_dims: 2
   eval_n_starts: 0.1
   init_n_heuristic: 0
+  do_normalize: False
 
   training_cfg:
     batch_size: 8

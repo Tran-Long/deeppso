@@ -144,7 +144,7 @@ class TSPActorNet(nn.Module):
         self.constraint_c_mean = constraint_c_mean
         self.constraint_w_std = constraint_w_std
         self.constraint_c_std = constraint_c_std
-
+        self.use_k_sparse = use_k_sparse
         # --- Backbone ---
         self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn, n_gnn_feats=n_gnn_feats, use_k_sparse=use_k_sparse)
 
@@ -194,14 +194,25 @@ class TSPActorNet(nn.Module):
         local_feats = torch.stack(
             [pos, vel, pbest, gbest.unsqueeze(-2).expand_as(pos)], dim=-1
         )
-        # Broadcast embeddings to every edge:
-        # tsp_embedding: (batch_size, dim, D) → (batch_size, n_particles, dim, D)
-        edge_emb_expanded = tsp_embedding.unsqueeze(1).expand(-1, n_particles, -1, -1)
-        # particle_ctx: (batch_size, n_particles, D) → (batch_size, n_particles, dim, D)
+        if self.use_k_sparse:
+            # Broadcast embeddings to every edge:
+            # tsp_embedding: (batch_size, n_c*n_k, D) → (batch_size, n_particles, n_c*n_k, D)
+            city_emb_expanded = tsp_embedding.unsqueeze(1).expand(-1, n_particles, -1, -1)
+            # particle_ctx: (batch_size, n_particles, D) → (batch_size, n_particles, dim, D)
+        else:
+            # Aggregate per-edge embeddings (nc * nk) into per-city ("dim") embeddings
+            k_sparse = getattr(problem, 'k_sparse', problem.n_cities)
+            # Reshape to (batch_size, dim, k_sparse, emb_dim) and average over the k edges
+            city_embedding = tsp_embedding.view(batch_size, dim, k_sparse, -1).mean(dim=2)
+
+            # Broadcast embeddings to every city:
+            # city_embedding: (B, dim, D) → (batch_size, n_particles, dim, D)
+            city_emb_expanded = city_embedding.unsqueeze(1).expand(-1, n_particles, -1, -1)
+            # particle_ctx: (batch_size, n_particles, D) → (batch_size, n_particles, dim, D)
         ctx_expanded = particle_ctx.unsqueeze(2).expand(-1, -1, dim, -1)
 
         # Concatenate: (batch_size, n_particles, dim, 2*D + 4)
-        edge_input = torch.cat([local_feats, edge_emb_expanded, ctx_expanded], dim=-1)
+        edge_input = torch.cat([local_feats, city_emb_expanded, ctx_expanded], dim=-1)
 
         # --- Shared MLP → per-edge (w, c1, c2) ---
         raw_mu = self.edge_head_mu(edge_input)  # (batch_size, n_particles, dim, 3)
@@ -332,21 +343,5 @@ class TSPCriticNetPerParticle(nn.Module):
 
         values = self.particle_value_head(particle_ctx).squeeze(-1)  # (batch_size, n_particles)
         return values
-
-
-class TSPVertexActorNet(nn.Module):
-    def __init__(
-            self,
-            emb_dim=32,
-            act_fn="silu",
-            n_gnn_feats=2,
-            **kwargs,
-        ):
-            super().__init__()
-            self.emb_dim = emb_dim
-            self.act_fn = act_fn
-    
-            # --- Backbone ---
-            self.backbone = TSPBackboneNet(emb_dim=emb_dim, act_fn=act_fn, n_gnn_feats=n_gnn_feats)
     
             

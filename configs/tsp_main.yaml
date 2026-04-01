@@ -9,7 +9,8 @@
 defaults:
   - _self_
   - base
-  - algorithms: ppo      # Default algorithm; override with 'override algorithms=<name>'
+  - nc_nk_cases: nc20  # Default dataset; override with 'override nc_nk_cases=<name>'
+  - algorithms: myopic_i      # Default algorithm; override with 'override algorithms=<name>'
 
 # Override specific base settings if needed
 log:

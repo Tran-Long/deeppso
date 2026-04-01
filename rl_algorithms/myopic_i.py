@@ -1,6 +1,6 @@
 import torch
 
-from envs import BaseEnvPSOBatchProblem
+from envs import BaseEnv
 
 from .base import BaseRLAlgorithm
 
@@ -8,7 +8,7 @@ from .base import BaseRLAlgorithm
 class MyopicI(BaseRLAlgorithm):
     # Single-step episode: only the immediate reward is used for the policy gradient, no credit assignment across PSO iterations.
     # REINFORCE
-    def training_step(self, env: BaseEnvPSOBatchProblem, idx):
+    def training_step(self, env: BaseEnv, idx):
         observations, _ = env.reset()
         opt = self.optimizers()
         for _iter in range(self.pso_iterations_train):
@@ -35,15 +35,23 @@ class MyopicI(BaseRLAlgorithm):
             baseline = reward.mean(dim=-1, keepdim=True)  # (B, 1)
             advantage = reward - baseline  # (B, P) or (B,)
             if len(reward.shape) == 2:
-                reinforce_loss = -(advantage * log_probs).mean()  # scalar: mean over B×P
+                reinforce_loss = -(
+                    advantage * log_probs
+                ).mean()  # scalar: mean over B×P
             elif len(reward.shape) == 1:
-                reinforce_loss = -(advantage * log_probs.mean(dim=-1)).mean()  # scalar: mean over B
+                reinforce_loss = -(
+                    advantage * log_probs.mean(dim=-1)
+                ).mean()  # scalar: mean over B
 
             loss = reinforce_loss - 0.01 * entropy.mean()
             # Single backward + optimizer step after all PSO iterations.
             # tsp_embedding's graph is traversed exactly once here.
             self.manual_backward(loss)
-            self.clip_gradients(opt, gradient_clip_val=self.max_grad_norm, gradient_clip_algorithm="norm")
+            self.clip_gradients(
+                opt,
+                gradient_clip_val=self.max_grad_norm,
+                gradient_clip_algorithm="norm",
+            )
             opt.step()
             opt.zero_grad()
 

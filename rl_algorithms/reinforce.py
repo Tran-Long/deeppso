@@ -1,6 +1,6 @@
 import torch
 
-from envs import BaseEnvPSOBatchProblem
+from envs import BaseEnv
 
 from .base import BaseRLAlgorithm
 
@@ -53,13 +53,20 @@ class REINFORCE(BaseRLAlgorithm):
       smaller value to sharpen credit assignment on longer rollouts.
     """
 
-    def __init__(self, *args, norm_rewards: bool = True, gamma: float = 1.0, entropy_coef: float = 0.01, **kwargs):
+    def __init__(
+        self,
+        *args,
+        norm_rewards: bool = True,
+        gamma: float = 1.0,
+        entropy_coef: float = 0.01,
+        **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.gamma = gamma
         self.entropy_coef = entropy_coef
         self.norm_rewards = norm_rewards
 
-    def training_step(self, env: BaseEnvPSOBatchProblem, idx):
+    def training_step(self, env: BaseEnv, idx):
         observations, _ = env.reset()
         opt = self.optimizers()
         opt.zero_grad()
@@ -74,15 +81,25 @@ class REINFORCE(BaseRLAlgorithm):
         # all_log_probs[t] : (B, P) — kept in the live computation graph
         # all_rewards[t]   : (B, P) — per-particle tour costs, detached
         # all_entropies[t] : (B, P) — kept in the live computation graph
-        all_log_probs = torch.zeros((T, env.batch_size), device=self.device)  # (T, B, P) → (T, B) after mean over particles
+        all_log_probs = torch.zeros(
+            (T, env.batch_size), device=self.device
+        )  # (T, B, P) → (T, B) after mean over particles
         all_rewards = torch.zeros((T, env.batch_size), device=self.device)  # (T, B)
         all_entropies = torch.zeros((T, env.batch_size), device=self.device)  # (T, B)
-        all_dones = torch.ones((T, env.batch_size), dtype=torch.bool, device=self.device)  # (T, B) assume all done until we see otherwise
+        all_dones = torch.ones(
+            (T, env.batch_size), dtype=torch.bool, device=self.device
+        )  # (T, B) assume all done until we see otherwise
 
-        is_env_dones = torch.zeros((env.batch_size,), dtype=torch.bool, device=self.device)  # (B,)
-        done = torch.zeros((env.batch_size,), dtype=torch.bool, device=self.device)  # (B,)
+        is_env_dones = torch.zeros(
+            (env.batch_size,), dtype=torch.bool, device=self.device
+        )  # (B,)
+        done = torch.zeros(
+            (env.batch_size,), dtype=torch.bool, device=self.device
+        )  # (B,)
         for _iter in range(self.pso_iterations_train):
-            is_env_dones = is_env_dones | done  # Done is taken from the previous step. Once a problem is done, it stays done.
+            is_env_dones = (
+                is_env_dones | done
+            )  # Done is taken from the previous step. Once a problem is done, it stays done.
             if is_env_dones.all():
                 break
 
@@ -95,7 +112,9 @@ class REINFORCE(BaseRLAlgorithm):
                 using_random=self.pso_using_random,
             )
             all_log_probs[_iter] = log_probs.mean(dim=-1)
-            all_rewards[_iter] = reward if len(reward.shape) == 1 else reward.mean(dim=-1)  # Handle both per-particle and already-meaned rewards.
+            all_rewards[_iter] = (
+                reward if len(reward.shape) == 1 else reward.mean(dim=-1)
+            )  # Handle both per-particle and already-meaned rewards.
             all_entropies[_iter] = entropy.mean(dim=-1)
 
         # ------------------------------------------------------------------ #
@@ -103,7 +122,7 @@ class REINFORCE(BaseRLAlgorithm):
         # ------------------------------------------------------------------ #
         returns = torch.zeros_like(all_rewards)  # (T, B)
         future_return = torch.zeros((env.batch_size,), device=self.device)  # (B,)
-        for t in reversed(range(T)): 
+        for t in reversed(range(T)):
             reward_t = all_rewards[t]  # (B,)
             done_t = all_dones[t]  # (B,)
             future_return = (reward_t + self.gamma * future_return) * (~done_t)  # (B,)
@@ -116,17 +135,25 @@ class REINFORCE(BaseRLAlgorithm):
         # Normalise per (step, problem) for scale-invariance across problem
         # sizes (20-city vs 100-city instances in the same batch).
         if self.norm_rewards:
-            returns = (returns - returns.mean(dim=-1, keepdim=True)) / (returns.std(dim=-1, keepdim=True).clamp(min=1e-8))  # Normalise returns per step for stability.
+            returns = (returns - returns.mean(dim=-1, keepdim=True)) / (
+                returns.std(dim=-1, keepdim=True).clamp(min=1e-8)
+            )  # Normalise returns per step for stability.
 
-        reinforce_loss = - (returns * all_log_probs).mean()  # REINFORCE policy gradient loss.
-        entropy_loss = - self.entropy_coef * all_entropies.mean()  # Entropy regularisation loss.
+        reinforce_loss = -(
+            returns * all_log_probs
+        ).mean()  # REINFORCE policy gradient loss.
+        entropy_loss = (
+            -self.entropy_coef * all_entropies.mean()
+        )  # Entropy regularisation loss.
         total_loss = reinforce_loss + entropy_loss
 
         # ------------------------------------------------------------------ #
         # Phase 4: single backward + optimizer step.                          #
         # ------------------------------------------------------------------ #
         self.manual_backward(total_loss)
-        self.clip_gradients(opt, gradient_clip_val=self.max_grad_norm, gradient_clip_algorithm="norm")
+        self.clip_gradients(
+            opt, gradient_clip_val=self.max_grad_norm, gradient_clip_algorithm="norm"
+        )
         opt.step()
         opt.zero_grad()
 

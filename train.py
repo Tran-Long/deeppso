@@ -114,7 +114,7 @@ class PeriodicTestCallback(L.Callback):
                 pl_module.train()
 
 
-@hydra.main(config_path="configs", config_name="tsp_main", version_base="1.3")
+@hydra.main(config_path="configs", config_name="main", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     # Convert OmegaConf to plain dict so downstream code stays unchanged
     config = OmegaConf.to_container(cfg, resolve=True)
@@ -123,13 +123,14 @@ def main(cfg: DictConfig) -> None:
     tensorboard_logger = pl_loggers.TensorBoardLogger(
         **config["log"],
     )
+    csv_logger = pl_loggers.CSVLogger(**config["log"])
     custom_logger = CustomLogger(log_folder=tensorboard_logger.log_dir)
     callbacks = [GradientNormLogger()]
     enable_test = config["env"]["test_cfg"].get("enable", False)
     if enable_test:
         callbacks.append(PeriodicTestCallback())
     trainer = L.Trainer(
-        **config["trainer"], callbacks=callbacks, logger=tensorboard_logger
+        **config["trainer"], callbacks=callbacks, logger=[tensorboard_logger, csv_logger]
     )
     # decide device for data module from trainer
     device = trainer.accelerator.name() if trainer.accelerator else "cpu"

@@ -1,0 +1,22 @@
+# @package _global_
+# Main with algorithm composition
+# 
+# Usage:
+#   python train.py                                    # Uses default algorithm (myopic)
+#   python train.py +algorithms=ppo                    # Override with PPO
+#   python train.py -m +sweeps=tsp_hparam_modular +algorithms=ppo hydra/launcher=joblib
+
+defaults:
+  - _self_
+  - problem: tsp
+  - nc_nk_cases: tsp_nc20  # Default dataset; override with 'override nc_nk_cases=<name>'
+  - algorithms: myopic_i      # Default algorithm; override with 'override algorithms=<name>'
+
+trainer:
+  max_epochs: 20
+  val_check_interval: 1.0
+  accelerator: "auto"
+  devices: [0]
+  num_sanity_val_steps: 0
+  log_every_n_steps: 32
+  strategy: auto

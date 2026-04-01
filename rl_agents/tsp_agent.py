@@ -55,12 +55,13 @@ class TSPACAgent(TSPAgent):
         emb_dim=32,
         act_fn="silu",
         n_gnn_feats=2,
+        use_k_sparse=True,
         constraint_w_mean=(0.4, 0.9),
         constraint_c_mean=(1.0, 3.0),
         constraint_w_std=(0.1, 0.2),
         constraint_c_std=(0.5, 1.0),
     ):
-        super().__init__(emb_dim=emb_dim, act_fn=act_fn, n_gnn_feats=n_gnn_feats, constraint_w_mean=constraint_w_mean, constraint_c_mean=constraint_c_mean, constraint_w_std=constraint_w_std, constraint_c_std=constraint_c_std)
+        super().__init__(emb_dim=emb_dim, act_fn=act_fn, n_gnn_feats=n_gnn_feats, use_k_sparse=use_k_sparse, constraint_w_mean=constraint_w_mean, constraint_c_mean=constraint_c_mean, constraint_w_std=constraint_w_std, constraint_c_std=constraint_c_std)
         # self.critic = TSPCriticNet(emb_dim=emb_dim, act_fn=act_fn)
         self.critic = TSPCriticNetPerParticle(emb_dim=emb_dim, act_fn=act_fn)
     

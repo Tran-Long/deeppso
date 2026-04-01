@@ -5,14 +5,13 @@
 
 env:
   training_cfg:
-    batch_size: 2
+    batch_size: 1
 
 rl_agent:
   name: "TSPACAgent"
   args:
     emb_dim: 64
     act_fn: "silu"
-    n_gnn_feats: 2
 
 rl_train:
   name: "VPG"

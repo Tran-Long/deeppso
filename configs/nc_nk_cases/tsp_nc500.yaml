@@ -1,0 +1,15 @@
+# @package _global_
+env:
+  n_particles: 256
+  test_cfg:
+    batch_size: 1
+    k_sparse: 50
+    n_cities: 500
+  training_cfg:
+    batch_size: 1
+    k_sparse: 50
+    n_cities: 500
+  validation_cfg:
+    batch_size: 2
+    k_sparse: 50
+    n_cities: 500

@@ -5,18 +5,20 @@ from .problems import *
 from .pso import *
 
 MAPPING_PROBLEM_TO_ENV = {
-    "tsp": (TSPBatchProblem, TSPEnvVectorEdgeBatch),
+    "tsp": (TSPBatchProblem, TSPEnv),
+    "cvrp": (CVRPBatchProblem, CVRPEnv),
 }
+
 
 class ProblemDataset:
     def __init__(
         self,
         problem_cls: BaseProblem,
-        env_cls: BaseEnvPSOBatchProblem,
+        env_cls: BaseEnv,
         n_particles,
         steps_per_epoch: int = 128,
         device="cpu",
-        batch_size=1, # default batch = 1 mean spawn a new problem instance at each step, not a batched problem
+        batch_size=1,  # default batch = 1 mean spawn a new problem instance at each step, not a batched problem
         **kwargs
     ):
         self.problem_cls = problem_cls
@@ -57,9 +59,9 @@ class EnvDataModule(L.LightningDataModule):
         self,
         problem_sig: str,
         n_particles,
-        training_cfg:dict,
-        validation_cfg:dict,
-        test_cfg:dict,
+        training_cfg: dict,
+        validation_cfg: dict,
+        test_cfg: dict,
         device="cpu",
         **kwargs
     ):
@@ -99,7 +101,9 @@ class EnvDataModule(L.LightningDataModule):
         }
         self.val_dataset_name = list(self.val_datasets_dict.keys())
         self.val_datasets = list(self.val_datasets_dict.values())
-        self.val_dataloader_idx2name = {idx: name for idx, name in enumerate(self.val_datasets_dict.keys())}
+        self.val_dataloader_idx2name = {
+            idx: name for idx, name in enumerate(self.val_datasets_dict.keys())
+        }
 
         # Prepare test datasets if needed. Procedure is the same as validation
         if test_cfg.pop("enable", False):
@@ -121,7 +125,9 @@ class EnvDataModule(L.LightningDataModule):
             }
             self.test_dataset_name = list(self.test_datasets_dict.keys())
             self.test_datasets = list(self.test_datasets_dict.values())
-            self.test_dataloader_idx2name = {idx: name for idx, name in enumerate(self.test_datasets_dict.keys())}
+            self.test_dataloader_idx2name = {
+                idx: name for idx, name in enumerate(self.test_datasets_dict.keys())
+            }
         else:
             self.test_problems_dict = {}
             self.test_datasets_dict = {}
@@ -140,7 +146,7 @@ class EnvDataModule(L.LightningDataModule):
             DataLoader(dataset, batch_size=1, collate_fn=single_collate_fn)
             for dataset in self.val_datasets
         ]
-    
+
     def test_dataloader(self):
         # For simplicity, we use the same validation datasets for testing. You can modify this to use separate test datasets if needed.
         return [

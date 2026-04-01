@@ -1,0 +1,40 @@
+# @package _global_
+
+env:
+  problem_sig: "tsp"
+  n_particles: 64
+  n_dims: 2
+  eval_n_starts: 0.1
+  # init_n_heuristic: 0
+  do_normalize: False
+
+  training_cfg:
+    auto_reset: True
+    patience: 10
+    reward_mode: "greedy"
+    mode: "range"
+    steps_per_epoch: 64
+  
+  validation_cfg:
+    auto_reset: False
+    mode: "choice"
+    random_include: False
+    random_size: 100
+    
+  test_cfg:
+    enable: True
+    auto_reset: False
+    mode: "choice"
+    random_include: False
+    random_size: 1280
+
+
+rl_agent:
+  name: "TSPAgent"
+  args:
+    n_gnn_feats: 2
+
+log:
+  save_dir: "./logs"
+  name: "tsp"
+  version: "default"

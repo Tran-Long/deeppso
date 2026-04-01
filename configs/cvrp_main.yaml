@@ -1,0 +1,76 @@
+# @package _global_
+# Base configuration with environment and trainer settings
+# Extend this in other configs and override with algorithm-specific settings
+
+# Hydra output directory configuration
+hydra:
+  run:
+    dir: ${log.save_dir}/${log.name}/${log.version}
+  sweep:
+    dir: ${log.save_dir}/${log.name}
+    subdir: ${log.version}/multirun/${hydra.job.override_dirname}
+  job:
+    chdir: false   # Keep cwd at the project root so relative imports & data paths work
+
+# Settings for dataset, aka environment
+env:
+  problem_sig: "cvrp"
+  n_particles: 64
+  n_dims: 2
+
+  training_cfg:
+    batch_size: 1
+    auto_reset: True
+    patience: 10
+    reward_mode: "greedy"
+    n_cities: 200
+    mode: "range"
+    repr_mode: "matrix"
+    steps_per_epoch: 64
+  
+  validation_cfg:
+    batch_size: 2
+    auto_reset: False
+    n_cities: 200
+    mode: "choice"
+    random_include: False
+    random_size: 100
+    repr_mode: "matrix"
+
+  test_cfg:
+    enable: True
+    batch_size: 2
+    auto_reset: False
+    n_cities: 200
+    mode: "choice"
+    random_include: False
+    random_size: 1280
+    repr_mode: "matrix"
+
+rl_agent:
+  name: "TSPAgent"
+  args:
+    emb_dim: 32
+    act_fn: "silu"
+    n_gnn_feats: 4
+    # use_k_sparse: False
+
+rl_train:
+  name: "MyopicI"
+  args:
+    pso_iterations_train: 64
+    pso_iterations_infer: 96
+
+trainer:
+  max_epochs: 20
+  val_check_interval: 1.0
+  accelerator: "auto"
+  devices: [1]
+  num_sanity_val_steps: 0
+  log_every_n_steps: 32
+  strategy: auto
+
+log:
+  save_dir: "./logs"
+  name: "cvrp"
+  version: "cvrp_mat_200"

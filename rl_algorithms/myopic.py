@@ -1,12 +1,12 @@
 import torch
 
-from envs import BaseEnvPSOBatchProblem
+from envs import BaseEnv
 
 from .base import BaseRLAlgorithm
 
 
 class Myopic(BaseRLAlgorithm):
-    def training_step(self, env: BaseEnvPSOBatchProblem, idx):
+    def training_step(self, env: BaseEnv, idx):
         observations, _ = env.reset()
         opt = self.optimizers()
         opt.zero_grad()
@@ -42,9 +42,13 @@ class Myopic(BaseRLAlgorithm):
             baseline = reward.mean(dim=-1, keepdim=True)  # (B, 1)
             advantage = reward - baseline  # (B, P) or (B,)
             if len(reward.shape) == 2:
-                reinforce_loss = -(advantage * log_probs).mean()  # scalar: mean over B×P
+                reinforce_loss = -(
+                    advantage * log_probs
+                ).mean()  # scalar: mean over B×P
             elif len(reward.shape) == 1:
-                reinforce_loss = -(advantage * log_probs.mean(dim=-1)).mean()  # scalar: mean over B
+                reinforce_loss = -(
+                    advantage * log_probs.mean(dim=-1)
+                ).mean()  # scalar: mean over B
 
             loss = reinforce_loss - 0.01 * entropy.mean()
             # Add to the live graph — backward is deferred until after the loop.
@@ -55,7 +59,9 @@ class Myopic(BaseRLAlgorithm):
         # Single backward + optimizer step after all PSO iterations.
         # tsp_embedding's graph is traversed exactly once here.
         self.manual_backward(total_loss)
-        self.clip_gradients(opt, gradient_clip_val=self.max_grad_norm, gradient_clip_algorithm="norm")
+        self.clip_gradients(
+            opt, gradient_clip_val=self.max_grad_norm, gradient_clip_algorithm="norm"
+        )
         opt.step()
         opt.zero_grad()
 

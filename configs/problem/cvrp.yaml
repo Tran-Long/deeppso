@@ -1,0 +1,39 @@
+# @package _global_
+
+env:
+  problem_sig: "cvrp"
+  n_particles: 64
+  n_dims: 2
+
+  training_cfg:
+    auto_reset: True
+    patience: 10
+    reward_mode: "greedy"
+    mode: "range"
+    repr_mode: "matrix"
+    steps_per_epoch: 64
+  
+  validation_cfg:
+    auto_reset: False
+    mode: "choice"
+    random_include: False
+    random_size: 100
+    repr_mode: "matrix"
+
+  test_cfg:
+    enable: True
+    auto_reset: False
+    mode: "choice"
+    random_include: False
+    random_size: 1280
+    repr_mode: "matrix"
+
+rl_agent:
+  name: "TSPAgent"
+  args:
+    n_gnn_feats: 4
+
+log:
+  save_dir: "./logs"
+  name: "cvrp"
+  version: "default"

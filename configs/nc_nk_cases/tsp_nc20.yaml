@@ -1,7 +1,7 @@
 # @package _global_
 env:
   test_cfg:
-    batch_size: 32
+    batch_size: 4
     k_sparse: 5
     n_cities: 20
   training_cfg:
