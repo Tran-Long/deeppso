@@ -108,6 +108,7 @@ class BaseEnv:
             self.initialize_population(**kwargs)
         )
         self.initialized = True
+        self.cnt_patience = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
         self.val_pbest = torch.full(
             (self.batch_size, self.n_particles), float("inf"), device=self.device
         )

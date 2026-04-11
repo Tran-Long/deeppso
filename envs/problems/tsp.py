@@ -17,18 +17,20 @@ def get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode) -> dict[int, int]:
         return {n_cities: k_sparse}
     else:
         if mode == "range":
-            assert len(n_cities) == 2, "n_cities should be a tuple of (min_cities, max_nodes) in 'range' mode."
-            n_cities_list = list(range(n_cities[0], n_cities[1]+1))
+            n_cities_list = list(range(n_cities[0], n_cities[-1]+1))
             if k_sparse is None:
                 return {n: n for n in n_cities_list}
             elif isinstance(k_sparse, int):
                 return {n: k_sparse for n in n_cities_list}
             elif isinstance(k_sparse, list):
-                if len(k_sparse) == 2:
-                    offset = (k_sparse[1] - k_sparse[0]) / (n_cities[1] - n_cities[0])
-                    return {n: int(k_sparse[0] + offset * (n - n_cities[0])) for n in n_cities_list}
-                elif len(k_sparse) == len(n_cities_list):
-                    return dict(zip(n_cities_list, k_sparse))
+                assert len(k_sparse) == len(n_cities), "k_sparse list length should match n_cities list length in 'range' mode."
+                mapping = {}
+                for i in range(len(n_cities)-1):
+                    offset = (k_sparse[i+1] - k_sparse[i]) / (n_cities[i+1] - n_cities[i])
+                    for n in range(n_cities[i], n_cities[i+1]):
+                        mapping[n] = int(k_sparse[i] + offset * (n - n_cities[i]))
+                mapping[n_cities[-1]] = k_sparse[-1]
+                return mapping
             else:
                 raise ValueError("k_sparse should be an integer or None in 'range' mode.")
         elif mode == "choice":
@@ -119,7 +121,7 @@ class TSPBatchProblem(BaseProblem):
         return torch.sum(self.distance_matrix[batch_indices, u, v], dim=2)
         
     @classmethod
-    def get_val_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", fix_start=False, random_include=True, random_size=100, n_dims=2, **kwargs) -> dict[str, list]:
+    def get_val_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", fix_start=False, random_include=False, random_size=100, n_dims=2, **kwargs) -> dict[str, list]:
         val_datasets_dict = {}
         n_cities2k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
         print(f">>> n_cities to k_sparse mapping for TSP validation datasets: {n_cities2k_sparse_mapping}")
@@ -156,7 +158,7 @@ class TSPBatchProblem(BaseProblem):
         return val_datasets_dict
     
     @classmethod
-    def get_test_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", fix_start=False, random_include=True, random_size=100, n_dims=2, **kwargs) -> dict[str, list]:
+    def get_test_instances(cls, n_cities, k_sparse, batch_size=1, mode="choice", fix_start=False, random_include=False, random_size=100, n_dims=2, **kwargs) -> dict[str, list]:
         test_datasets_dict = {}
         n_cities2k_sparse_mapping = get_n_cities_k_sparse_mapping(n_cities, k_sparse, mode)
         all_n_cities = list(set(n_cities2k_sparse_mapping.keys()))
@@ -172,15 +174,24 @@ class TSPBatchProblem(BaseProblem):
                     lines = f.readlines()[:random_size] 
                 for i in range(0, len(lines), batch_size):
                     batch_coordinates = []
+                    batch_best_solutions = []
                     for line in lines[i:i+batch_size]:
-                        derivate = line.split(' ')
+                        derivate = line.strip().split(' ')
                         coords = torch.tensor(
                             np.array(derivate[0:2*n_cities_file], dtype = np.float64).reshape(n_cities_file, 2)
                         ).float()
                         batch_coordinates.append(coords)
+                        best_solution = torch.tensor(
+                            np.array(derivate[-n_cities_file:], dtype=np.int64)
+                        ).long() - 1  # Convert to 0-based index
+                        batch_best_solutions.append(best_solution)
+
                     batch_coordinates = torch.stack(batch_coordinates)
+                    batch_best_solutions = torch.stack(batch_best_solutions)
                     problem_instance = cls(n_cities=n_cities_file, k_sparse=k_sparse_file, batch_size=batch_coordinates.shape[0], mode=mode, fix_start=fix_start, n_dims=n_dims)
                     problem_instance.set_coordinates(batch_coordinates)
+                    problem_instance.val_best_solution = batch_best_solutions.unsqueeze(1).to(problem_instance.device)  # Store the best solutions for later evaluation
+                    problem_instance.val_best = problem_instance.evaluate(problem_instance.val_best_solution).squeeze(1)
                     test_datasets_dict[f"{n_cities_file}_file"].append(problem_instance)
 
         need_random = []

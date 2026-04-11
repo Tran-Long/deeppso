@@ -28,9 +28,9 @@ class BaseRLAlgorithm(L.LightningModule):
 
         # For logging
         self.custom_logger: CustomLogger = custom_logger
-        assert (
-            self.custom_logger is not None
-        ), "CustomLogger instance must be provided for logging population stats during validation."
+        # assert (
+        #     self.custom_logger is not None
+        # ), "CustomLogger instance must be provided for logging population stats during validation."
         self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
         self.val_dataloader_idx2name = (
             {}
@@ -64,9 +64,9 @@ class BaseRLAlgorithm(L.LightningModule):
         )
 
     def validation_step(self, env: BaseEnv, idx, dataloader_idx=0):
-        assert (
-            env.auto_reset == False
-        ), "Validation env should have auto_reset=False to evaluate final performance after patience runs out."
+        # assert (
+        #     env.auto_reset == False
+        # ), "Validation env should have auto_reset=False to evaluate final performance after patience runs out."
         observations, _ = env.reset()
 
         self.val_gbest_dataloader["initial"][dataloader_idx] = (
@@ -104,8 +104,13 @@ class BaseRLAlgorithm(L.LightningModule):
             self.val_gbest_dataloader["wc1c2_ls"].get(dataloader_idx, [])
             + env.val_gbest_ls.tolist()
         )
+        env.to("cpu")
 
     def on_validation_epoch_end(self):
+        cost_for_checkpoint = {
+            "val_avg_cost": [],
+            "val_avg_cost_ls": [],
+        }
         for key in self.val_gbest_dataloader.keys():
             for dataloader_idx in self.val_gbest_dataloader[key].keys():
                 val_gbest_list = self.val_gbest_dataloader[key][dataloader_idx]
@@ -114,17 +119,34 @@ class BaseRLAlgorithm(L.LightningModule):
                     f"val_{key}/{self.val_dataloader_idx2name.get(dataloader_idx, dataloader_idx)}",
                     avg_val_gbest,
                     prog_bar=True if key == "wc1c2" else False,
-                    sync_dist=True,  # sync across devices for correct avg in DDP
+                    # sync_dist=True,  # sync across devices for correct avg in DDP
                 )
+                if key == "wc1c2":
+                    cost_for_checkpoint["val_avg_cost"].append(avg_val_gbest)
+                if key == "wc1c2_ls":
+                    cost_for_checkpoint["val_avg_cost_ls"].append(avg_val_gbest)
+        # Log avg cost across all validation dataloaders for checkpointing
+        if cost_for_checkpoint["val_avg_cost"]:
+            self.log(
+                "val_avg_cost",
+                sum(cost_for_checkpoint["val_avg_cost"])
+                / len(cost_for_checkpoint["val_avg_cost"]),
+            )
+        if cost_for_checkpoint["val_avg_cost_ls"]:
+            self.log(
+                "val_avg_cost_ls",
+                sum(cost_for_checkpoint["val_avg_cost_ls"])
+                / len(cost_for_checkpoint["val_avg_cost_ls"]),
+            )
         self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
 
         self.custom_logger.save_population_stats()
 
     def test_step(self, env: BaseEnv, idx, dataloader_idx=0):
-        # Same as validation step but logs to test_dataloader_idx2name and saves test gbest results separately
-        assert (
-            env.auto_reset == False
-        ), "Test env should have auto_reset=False to evaluate final performance after patience runs out."
+        # # Same as validation step but logs to test_dataloader_idx2name and saves test gbest results separately
+        # assert (
+        #     env.auto_reset == False
+        # ), "Test env should have auto_reset=False to evaluate final performance after patience runs out."
         observations, _ = env.reset()
 
         self.test_gbest_dataloader["initial"][dataloader_idx] = (
@@ -162,6 +184,7 @@ class BaseRLAlgorithm(L.LightningModule):
             self.test_gbest_dataloader["wc1c2_ls"].get(dataloader_idx, [])
             + env.val_gbest_ls.tolist()
         )
+        env.to("cpu")
 
     def on_test_epoch_end(self):
         for key in self.test_gbest_dataloader.keys():
@@ -172,6 +195,6 @@ class BaseRLAlgorithm(L.LightningModule):
                     f"test_{key}/{self.test_dataloader_idx2name.get(dataloader_idx, dataloader_idx)}",
                     avg_test_gbest,
                     prog_bar=True if key == "wc1c2" else False,
-                    sync_dist=True,  # sync across devices for correct avg in DDP
+                    # sync_dist=True,  # sync across devices for correct avg in DDP
                 )
         self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}

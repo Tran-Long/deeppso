@@ -122,77 +122,66 @@ class CVRPEnv(BaseEnv):
 
         # --- Matrix Mode (Default) ---
         bp_indices = torch.arange(BP, device=device)
-
-        def update_visit_masks(visit_masks, actions):
-            # visit_masks shape: (BP, N)
-            # actions shape: (BP, )
-            visit_masks[bp_indices, actions] = 0
-            visit_masks[:, 0] = 1
-            # depot can be revisited with one exception,
-            # where arrive at depot, and all cities have been visited,
-            # then the route is finished, and the depot should not be visited again
-            visit_masks[(actions == 0) * (visit_masks[:, 1:] != 0).any(dim=1), 0] = 0
-            return visit_masks
-
-        def update_capacity_mask(cur_nodes, used_capacity, demands):
-            """
-            Args:
-                cur_nodes: shape (BP, )
-                used_capacity: shape (BP, )
-                demands: flatten + repeat -> shape (BP, N)
-            Returns:
-                capacity: updated capacity
-                capacity_mask: updated mask
-            """
-            capacity_mask = torch.ones(size=(BP, N), device=self.device)
-            # update capacity
-            used_capacity[cur_nodes == 0] = 0
-            used_capacity = (
-                used_capacity + demands[torch.arange(BP, device=self.device), cur_nodes]
-            )
-            # update capacity_mask
-            remaining_capacity = CA - used_capacity  # (BP, )
-            remaining_capacity_repeat = remaining_capacity.unsqueeze(-1).repeat(
-                1, N
-            )  # (BP, N)
-            capacity_mask[demand_flat > remaining_capacity_repeat] = 0
-            return used_capacity, capacity_mask
-
-        def check_done(visit_mask, actions):
-            return (visit_mask[:, 1:] == 0).all() and (actions == 0).all()
-
-        # flat population to (BP, D)
         pop_flat = self.population.view(BP, N, N)
-        # demands shape: (B, N) -> (BP, N)
-        demand_flat = self.problem.demands.repeat_interleave(P, dim=0)  # (BP, N)
+        demand_flat = self.problem.demands.repeat_interleave(P, dim=0)
 
-        starts = torch.zeros((BP,), dtype=torch.long, device=self.device)
-        visit_masks = torch.ones((BP, N), dtype=torch.bool, device=self.device)
-        visit_masks = update_visit_masks(visit_masks, starts)
-        used_capacity = torch.zeros((BP,), device=self.device)
-        used_capacity, capacity_mask = update_capacity_mask(
-            starts, used_capacity, demand_flat
+        actions = torch.zeros((BP,), dtype=torch.long, device=device)
+        visit_masks = torch.ones((BP, N), dtype=torch.bool, device=device)
+        visit_masks[:, 0] = (
+            0  # Depot off initially until demand forces it, or routing starts
         )
 
-        paths = [starts]
-        done = check_done(visit_masks, starts)
-        prev = starts
+        used_capacity = torch.zeros((BP,), dtype=torch.float, device=device)
+
+        paths = [actions]
+
+        # Precompute boolean masks for speed
+        has_unvisited = torch.ones(BP, dtype=torch.bool, device=device)
+        done = False
+
         while not done:
-            cur_pop = pop_flat[bp_indices, prev, :]  # (BP, N)
-            combined_mask = visit_masks & capacity_mask.bool()  # (BP, N)
-            masked_pop = cur_pop.masked_fill(~combined_mask, float("-inf"))
-            if stochastic:
-                action_dist = dist.Categorical(logits=masked_pop / temperature)
-                actions = action_dist.sample()  # (BP, )
-            else:
-                actions = masked_pop.argmax(dim=1)  # (BP, )
-            visit_masks = update_visit_masks(visit_masks, actions)
-            used_capacity, capacity_mask = update_capacity_mask(
-                actions, used_capacity, demand_flat
+            # 1. Capacity Update
+            # reset used_capacity to 0 where action was 0 (depot)
+            is_depot = actions == 0
+            used_capacity = torch.where(
+                is_depot, torch.zeros_like(used_capacity), used_capacity
             )
+            # Add demand of current city
+            used_capacity += demand_flat[bp_indices, actions]
+
+            # 2. Fast Mask Generation
+            remaining_capacity = CA - used_capacity
+            # Efficient broadcasting to check if nodes fit capacity without .repeat() or .ones()
+            capacity_mask = demand_flat <= remaining_capacity.unsqueeze(-1)
+
+            # 3. Path generation
+            cur_pop = pop_flat[bp_indices, actions, :]
+
+            # Allow depot (index 0) EXCEPT when we are at the depot and there are unvisited cities
+            # (This prevents idling at the depot, but allows staying at the depot when done)
+            visit_masks[:, 0] = ~(is_depot & has_unvisited)
+
+            # Combine visit and capacity logic
+            combined_mask = visit_masks & capacity_mask
+            masked_pop = cur_pop.masked_fill(~combined_mask, float("-inf"))
+
+            if stochastic:
+                actions = dist.Categorical(logits=masked_pop / temperature).sample()
+            else:
+                actions = masked_pop.argmax(dim=1)
+
+            # 4. State Update
+            # Mark selected nodes as visited
+            visit_masks[bp_indices, actions] = False
+
+            # Recalculate has_unvisited: Check if any nodes 1 to N-1 are still True
+            has_unvisited = visit_masks[:, 1:].any(dim=1)
+
+            # 5. Check Done (Sync CPU-GPU only once per step)
+            # Done if ALL unvisited are false AND ALL current actions are 0
+            done = bool((~has_unvisited).all().item() and is_depot.all().item())
+
             paths.append(actions)
-            done = check_done(visit_masks, actions)
-            prev = actions
 
         paths = torch.stack(paths, dim=1)  # (BP, T)
         paths = paths.view(B, P, -1)  # (B, P, T)
@@ -256,6 +245,10 @@ class CVRPEnv(BaseEnv):
             reward = torch.clamp(delta_val_gbest, min=0.0)  # (B,)
         elif self.reward_mode == RewardMode.DELTA_GBEST_RAW:
             reward = delta_val_gbest  # (B,)
+        elif self.reward_mode == RewardMode.DELTA_PBEST:
+            reward = torch.clamp(delta_val_pbest, min=0.0)  # (B, P)
+        elif self.reward_mode == RewardMode.DELTA_PBEST_RAW:
+            reward = delta_val_pbest  # (B, P)
         else:
             raise ValueError(f"Invalid reward_mode: {self.reward_mode}")
 

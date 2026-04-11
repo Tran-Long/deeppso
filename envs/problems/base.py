@@ -9,7 +9,8 @@ class BaseProblem:
     # Each instance will be a single data sample, e.g., a TSP instance
     def __init__(self, **kwargs):
         self.device = "cpu" # default device, will be updated in training/validation/test loops
-        pass
+        self.val_best = None
+        self.val_best_solution = None
 
     def to(self, device):
         return self

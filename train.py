@@ -1,3 +1,5 @@
+import os
+
 import hydra
 import pytorch_lightning as L
 import torch
@@ -5,6 +7,8 @@ from lightning.pytorch import loggers as pl_loggers
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBar
 from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
+from lightning.pytorch.callbacks import ModelCheckpoint
+import yaml
 
 from envs import EnvDataModule
 from logger import CustomLogger
@@ -118,17 +122,25 @@ class PeriodicTestCallback(L.Callback):
 def main(cfg: DictConfig) -> None:
     # Convert OmegaConf to plain dict so downstream code stays unchanged
     config = OmegaConf.to_container(cfg, resolve=True)
-
     # Start training
     tensorboard_logger = pl_loggers.TensorBoardLogger(
         **config["log"],
     )
+    os.makedirs(tensorboard_logger.log_dir, exist_ok=True)
+    with open(f"{tensorboard_logger.log_dir}/config.yaml", "w") as f:
+        yaml.dump(config, f)
     csv_logger = pl_loggers.CSVLogger(**config["log"])
     custom_logger = CustomLogger(log_folder=tensorboard_logger.log_dir)
-    callbacks = [GradientNormLogger()]
-    enable_test = config["env"]["test_cfg"].get("enable", False)
-    if enable_test:
-        callbacks.append(PeriodicTestCallback())
+    callbacks = [
+        GradientNormLogger(),
+        ModelCheckpoint(
+            dirpath=f"{tensorboard_logger.log_dir}/checkpoints",
+            monitor="val_avg_cost",
+            mode="min",
+            filename="best-{epoch:02d}-{val_avg_cost:.3f}",
+            save_top_k=3,
+        )
+    ]
     trainer = L.Trainer(
         **config["trainer"], callbacks=callbacks, logger=[tensorboard_logger, csv_logger]
     )
@@ -148,10 +160,7 @@ def main(cfg: DictConfig) -> None:
     rl_train.val_dataloader_idx2name = (
         env_module.val_dataloader_idx2name
     )  # For logging purposes
-    if enable_test:
-        rl_train.test_dataloader_idx2name = (
-            env_module.test_dataloader_idx2name
-        )  # For logging purposes
+    
     hparams_dict = {
         "env": env_module.get_hparams_dict(),
         "rl_agent": config["rl_agent"],
@@ -160,7 +169,7 @@ def main(cfg: DictConfig) -> None:
     }
     custom_logger.log_hparams(hparams_dict)
     trainer.fit(rl_train, env_module)
-
+    
 
 if __name__ == "__main__":
     main()

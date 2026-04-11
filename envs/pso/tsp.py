@@ -436,9 +436,10 @@ class TSPEnv(BaseEnv):
         ]  # (batch_size, n_particles, n_cities)
 
         ### Local search on best paths
-        best_paths_ls = self.problem.local_search(best_paths)
-        best_costs_ls = self.problem.evaluate(best_paths_ls)
-        return best_paths, best_costs, best_paths_ls, best_costs_ls, mean_costs
+        # best_paths_ls = self.problem.local_search(best_paths)
+        # best_costs_ls = self.problem.evaluate(best_paths_ls)
+        # return best_paths, best_costs, best_paths_ls, best_costs_ls, mean_costs
+        return best_paths, best_costs, best_paths, best_costs, mean_costs
 
 
 class TSPEnvVectorVertex(TSPEnv):
