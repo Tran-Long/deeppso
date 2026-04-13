@@ -1,0 +1,22 @@
+# @package _global_
+# Main Hydra config for ACO training
+# 
+# Usage:
+#   python train_aco.py                              # Uses default (aco_tsp)
+#   python train_aco.py aco_config=aco_cvrp         # Override with CVRP
+
+# Select which ACO config to use (aco_tsp or aco_cvrp)
+# Can be overridden via: python train_aco.py aco_config=aco_cvrp
+defaults:
+  - _self_
+  - nc_nk_cases: tsp_nc20_50
+  - problem: aco_tsp
+
+trainer:
+  max_epochs: 10
+  val_check_interval: 1.0
+  accelerator: "cuda"
+  devices: [1]
+  num_sanity_val_steps: 0
+  log_every_n_steps: 16
+  strategy: auto

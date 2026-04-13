@@ -6,10 +6,10 @@ env:
     k_sparse: 20
     n_cities: 200
   training_cfg:
-    batch_size: 2
+    batch_size: 1
     k_sparse: 20
     n_cities: 200
   validation_cfg:
-    batch_size: 4
+    batch_size: 2
     k_sparse: 20
     n_cities: 200

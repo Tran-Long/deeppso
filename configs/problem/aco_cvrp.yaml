@@ -1,51 +1,36 @@
+# @package _global_
 env:
   # PSO env settings
   problem_sig: "cvrp"
-  n_particles: 64
+  n_particles: 2
 
   # Problem general specific settings
   n_dims: 2
 
   training_cfg:
     batch_size: 1
-    n_cities: 100
-    mode: "range" # "range" or "choice"
     steps_per_epoch: 128
   
   validation_cfg:
     batch_size: 1
-    n_cities: 100
-    mode: "choice"
     random_include: False
     random_size: 100
     
   test_cfg:
     enable: True
     batch_size: 1
-    n_cities: 100
-    mode: "choice"
     random_include: False
     random_size: 1280
 
 aco_agent:
-  n_cities: 100
-  n_ants: 10
-  mode: "choice" # "range" or "choice"
+  n_cities: [20, 50, 100, 200, 500, 1000]
+  n_ants: [5, 10, 20, 20, 50, 100]
   aco_iterations_infer: 10
   n_gnn_feats: 4
-
-
-trainer:
-  max_epochs: 10
-  val_check_interval: 1.0
-  accelerator: "cuda"
-  devices: [2]
-  num_sanity_val_steps: 0
-  log_every_n_steps: 16
-  strategy: auto
-
+  use_nls: False
+  w_nls: 0.95
 
 log:
   save_dir: "./logs"
   name: "aco_cvrp"
-  version: "n100"
+  version: "default"

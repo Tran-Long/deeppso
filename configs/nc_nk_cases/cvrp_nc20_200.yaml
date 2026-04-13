@@ -1,0 +1,15 @@
+# @package _global_
+env:
+  n_particles: 64
+  test_cfg:
+    batch_size: 1
+    mode: "choice"
+    n_cities: [20, 50, 100, 200, 500]
+  training_cfg:
+    batch_size: 1
+    mode: "range"
+    n_cities: [20, 200]
+  validation_cfg:
+    batch_size: 1
+    mode: "choice"
+    n_cities: [20, 50, 100, 200, 500]

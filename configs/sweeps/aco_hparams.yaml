@@ -15,24 +15,24 @@
 # --- Unique log version per sweep job ---
 # hydra:job.num is the 0-based index of the job within the sweep
 log:
-  version: "iteration1_${hydra:job.num}"
+  version: "eval_${hydra:job.num}"
 
 # --- Joblib launcher configuration ---
 # Using single device per job to avoid DDP subprocess issues
 trainer:
-  devices: [0]
+  devices: [2]
   strategy: auto
 
 hydra:
   launcher:
-    n_jobs: 4
+    n_jobs: 8
 
   # --- Sweep grid -------------------------------------------------------
   # Each value is a comma-separated list; BasicSweeper creates the
   # Cartesian product of all lists below
   sweeper:
     params:
-      problem: tsp
-      nc_nk_cases: tsp_nc200
-      rl_train.args.pso_iterations_train: 96
+      nc_nk_cases: tsp_nc20,tsp_nc50,tsp_nc100,tsp_nc200,tsp_nc500,tsp_nc20_50,tsp_nc20_100,tsp_nc20_200
+      problem: aco_tsp
+
 

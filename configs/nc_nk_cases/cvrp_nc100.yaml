@@ -2,11 +2,11 @@
 env:
   n_particles: 128
   test_cfg:
-    batch_size: 1
+    batch_size: 2
     n_cities: 100
   training_cfg:
-    batch_size: 4
+    batch_size: 1
     n_cities: 100
   validation_cfg:
-    batch_size: 8
+    batch_size: 2
     n_cities: 100

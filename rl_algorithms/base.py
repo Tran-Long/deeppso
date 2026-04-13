@@ -140,7 +140,8 @@ class BaseRLAlgorithm(L.LightningModule):
             )
         self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
 
-        self.custom_logger.save_population_stats()
+        if self.custom_logger:
+            self.custom_logger.save_population_stats()
 
     def test_step(self, env: BaseEnv, idx, dataloader_idx=0):
         # # Same as validation step but logs to test_dataloader_idx2name and saves test gbest results separately

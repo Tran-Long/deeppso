@@ -1,33 +1,41 @@
-from deepaco.deep_aco_module import DeepACOModule
-from lightning.pytorch import loggers as pl_loggers
-from pytorch_lightning.callbacks.progress.tqdm_progress import Tqdm
-from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBar
-from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
+import os
+
+import hydra
 import pytorch_lightning as L
 import torch
 import yaml
+from lightning.pytorch import loggers as pl_loggers
+from lightning.pytorch.callbacks import ModelCheckpoint
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBar
+from pytorch_lightning.callbacks.progress.tqdm_progress import TQDMProgressBar
+
+from deepaco.deep_aco_module import DeepACOModule
 from envs import EnvDataModule
 
+
 class GradientNormLogger(L.Callback):
-    def on_before_optimizer_step(self, trainer: L.Trainer, pl_module: L.LightningModule, optimizer: torch.optim.Optimizer) -> None:
+    def on_before_optimizer_step(
+        self,
+        trainer: L.Trainer,
+        pl_module: L.LightningModule,
+        optimizer: torch.optim.Optimizer,
+    ) -> None:
         """
         Called before the optimizer takes a step (i.e., after the gradients are computed).
         """
         if pl_module.global_step % trainer.log_every_n_steps == 0:
             # 1. Calculate the L2 Norm (without clipping)
             grad_norm = torch.nn.utils.clip_grad_norm_(
-                pl_module.parameters(), 
-                max_norm=float('inf') 
+                pl_module.parameters(), max_norm=float("inf")
             )
 
             # 2. Log the value using the Lightning logger
             # Use self.log() to record the metric across all loggers (TensorBoard, etc.)
             pl_module.log(
-                "gradient_norm/global_norm", 
-                grad_norm, 
-                on_step=True, 
-                on_epoch=False
+                "gradient_norm/global_norm", grad_norm, on_step=True, on_epoch=False
             )
+
 
 class PeriodicTestCallback(L.Callback):
     def __init__(self, run_every_n_epochs=5):
@@ -87,44 +95,51 @@ class PeriodicTestCallback(L.Callback):
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Train an ACO agent via Policy Gradient.")
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to the YAML configuration file.",
-    )
-    args = parser.parse_args()
+    @hydra.main(config_path="configs", config_name="aco_main", version_base="1.3")
+    def main(cfg: DictConfig) -> None:
+        # Convert OmegaConf to plain dict so downstream code stays unchanged
+        config = OmegaConf.to_container(cfg, resolve=True)
+        # print(">>> Training with config:")
+        # print(yaml.dump(config))
 
-    config = yaml.safe_load(open(args.config, "r"))
-    tensorboard_logger = pl_loggers.TensorBoardLogger(
-        **config["log"],
-    )
-    callbacks = [GradientNormLogger()]
-    enable_test = config["env"]["test_cfg"].get("enable", False)
-    if enable_test:
-        callbacks.append(PeriodicTestCallback())
-    trainer = L.Trainer(
-        **config["trainer"],
-        callbacks=callbacks,
-        logger=tensorboard_logger,)
+        # Start training
+        tensorboard_logger = pl_loggers.TensorBoardLogger(
+            **config["log"],
+        )
+        os.makedirs(tensorboard_logger.log_dir, exist_ok=True)
+        with open(f"{tensorboard_logger.log_dir}/config.yaml", "w") as f:
+            yaml.dump(config, f)
 
-    # decide device for data module from trainer
-    device = trainer.accelerator.name() if trainer.accelerator else "cpu"
-    if device == "cuda":
-        assert (
-            len(trainer.device_ids) == 1
-        ), "Multiple devices not supported for data module initialization yet."
-        device = f"{device}:{trainer.device_ids[0]}" if trainer.device_ids else device
+        callbacks = [GradientNormLogger()]
+        enable_test = config["env"]["test_cfg"].get("enable", False)
+        if enable_test:
+            callbacks.append(PeriodicTestCallback())
 
+        trainer = L.Trainer(
+            **config["trainer"],
+            callbacks=callbacks,
+            logger=tensorboard_logger,
+        )
 
-    data_module = EnvDataModule(**config["env"], device=device)
-    model = DeepACOModule(**config["aco_agent"])
-    model.val_idx2names = (
-        data_module.val_dataloader_idx2name
-    )  # For logging purposes
-    if enable_test:
-        model.test_idx2names = (
-            data_module.test_dataloader_idx2name
+        # decide device for data module from trainer
+        device = trainer.accelerator.name() if trainer.accelerator else "cpu"
+        if device == "cuda":
+            assert (
+                len(trainer.device_ids) == 1
+            ), "Multiple devices not supported for data module initialization yet."
+            device = (
+                f"{device}:{trainer.device_ids[0]}" if trainer.device_ids else device
+            )
+
+        data_module = EnvDataModule(**config["env"], device=device)
+        model = DeepACOModule(**config["aco_agent"])
+        model.val_idx2names = (
+            data_module.val_dataloader_idx2name
         )  # For logging purposes
-    trainer.fit(model, datamodule=data_module)
+        if enable_test:
+            model.test_idx2names = (
+                data_module.test_dataloader_idx2name
+            )  # For logging purposes
+        trainer.fit(model, datamodule=data_module)
+
+    main()

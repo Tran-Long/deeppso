@@ -6,6 +6,7 @@ from envs.pso import CVRPEnv, TSPEnv, BaseEnv
 from .aco_cvrp import ACO as ACOCVRP
 from .aco_net import Net as ACOGraphNet
 from .aco_tsp import ACO as ACOTSP
+from .aco_tsp_nls import ACO as ACOTSPNLS
 
 
 class DeepACOModule(L.LightningModule):
@@ -16,6 +17,8 @@ class DeepACOModule(L.LightningModule):
         mode: str = "range",
         aco_iterations_infer: int = 20,
         n_gnn_feats: int = 2,
+        use_nls: bool = True,
+        w_nls: float = 0.95,
         **kwargs,
     ):
         super().__init__()
@@ -62,6 +65,8 @@ class DeepACOModule(L.LightningModule):
         self.aco_iterations_infer = aco_iterations_infer
 
         self.automatic_optimization = False
+        self.use_nls = use_nls
+        self.w_nls = w_nls
         self.net = ACOGraphNet(n_gnn_feats=n_gnn_feats)
         self.eval_metrics = {}
         self.val_idx2names = {}
@@ -76,14 +81,18 @@ class DeepACOModule(L.LightningModule):
         assert env.batch_size == 1
         heu_vec = self.net(env.problem.pyg_data.to(self.device))
         heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
+        use_nls = False
         if isinstance(env, TSPEnv):
-            aco = ACOTSP(
+            clas = ACOTSPNLS if self.use_nls else ACOTSP
+            use_nls = self.use_nls
+            aco = clas(
                 n_ants=self.n_cities2n_ants[env.problem.n_cities],
                 heuristic=heu_mat,
                 distances=env.problem.distance_matrix[0],
                 device=self.device,
             )
         elif isinstance(env, CVRPEnv):
+            use_nls = False
             aco = ACOCVRP(
                 n_ants=self.n_cities2n_ants[env.problem.n_cities - 1],  # CVRP has n_cities-1 customer nodes excluding depot
                 heuristic=heu_mat,
@@ -92,10 +101,16 @@ class DeepACOModule(L.LightningModule):
                 device=self.device,
             )
         opt = self.optimizers()
-        costs, log_probs = aco.sample()
+        costs, log_probs, paths = aco.sample(inference=False)
         baseline = costs.mean()
+        if use_nls:
+            costs_ls, _ = aco.sample_2opt(paths)
+            baseline_ls = costs_ls.mean()
+            cost = (costs_ls - baseline_ls) * self.w_nls + (costs - baseline) * (1 - self.w_nls)
+        else:
+            cost = costs - baseline
 
-        reinforce_loss = torch.sum((costs - baseline) * log_probs.sum(dim=0)) / aco.n_ants
+        reinforce_loss = torch.sum(cost.detach() * log_probs.sum(dim=0)) / aco.n_ants
         opt.zero_grad()
         self.manual_backward(reinforce_loss)
         self.log("train_loss", reinforce_loss, batch_size=1)
@@ -107,7 +122,8 @@ class DeepACOModule(L.LightningModule):
         for i, heu_vec in enumerate(heu_vecs):
             if isinstance(env, TSPEnv):
                 heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
-                aco = ACOTSP(
+                clas = ACOTSPNLS if self.use_nls else ACOTSP
+                aco = clas(
                     n_ants=self.n_cities2n_ants[env.problem.n_cities],
                     heuristic=heu_mat,
                     distances=env.problem.distance_matrix[i],
@@ -122,8 +138,8 @@ class DeepACOModule(L.LightningModule):
                     demand=env.problem.demands[i].view(-1),
                     device=self.device
                 )
-            costs, _ = aco.sample()
-            aco.run(n_iterations=self.aco_iterations_infer)
+            costs, _, _ = aco.sample(inference=True)
+            aco.run(n_iterations=self.aco_iterations_infer, inference=True)
             baseline = costs.mean()
             best_sample_cost = torch.min(costs)
             best_aco_cost = aco.lowest_cost
@@ -154,7 +170,8 @@ class DeepACOModule(L.LightningModule):
         for i, heu_vec in enumerate(heu_vecs):
             if isinstance(env, TSPEnv):
                 heu_mat = self.net.reshape(env.problem.pyg_data.to(self.device), heu_vec) + 1e-9
-                aco = ACOTSP(
+                clas = ACOTSPNLS if self.use_nls else ACOTSP
+                aco = clas(
                     n_ants=self.n_cities2n_ants[env.problem.n_cities],
                     heuristic=heu_mat,
                     distances=env.problem.distance_matrix[i],
@@ -169,8 +186,8 @@ class DeepACOModule(L.LightningModule):
                     demand=env.problem.demands[i].view(-1),
                     device=self.device
                 )
-            costs, _ = aco.sample()
-            aco.run(n_iterations=self.aco_iterations_infer)
+            costs, _, _ = aco.sample(inference=True)
+            aco.run(n_iterations=self.aco_iterations_infer, inference=True)
             baseline = costs.mean()
             best_sample_cost = torch.min(costs)
             best_aco_cost = aco.lowest_cost

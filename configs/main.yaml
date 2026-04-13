@@ -9,14 +9,15 @@
 defaults:
   - _self_
   - problem: tsp
-  - nc_nk_cases: tsp_nc20  # Default dataset; override with 'override nc_nk_cases=<name>'
+  - nc_nk_cases: tsp_nc500  # Default dataset; override with 'override nc_nk_cases=<name>'
   - algorithms: myopic_i      # Default algorithm; override with 'override algorithms=<name>'
+  - pso_update: raw_update     # Default PSO update; override with 'override pso_update=<name>'
 
 trainer:
   max_epochs: 20
   val_check_interval: 1.0
   accelerator: "auto"
-  devices: [0]
+  devices: [3]
   num_sanity_val_steps: 0
   log_every_n_steps: 32
   strategy: auto

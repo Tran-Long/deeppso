@@ -1,6 +1,6 @@
 # @package _global_
 env:
-  n_particles: 128
+  n_particles: 96
   test_cfg:
     batch_size: 1
     n_cities: 500
@@ -8,5 +8,5 @@ env:
     batch_size: 1
     n_cities: 500
   validation_cfg:
-    batch_size: 2
+    batch_size: 1
     n_cities: 500

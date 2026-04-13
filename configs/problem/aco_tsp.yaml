@@ -1,0 +1,36 @@
+# @package _global_
+env:
+  # PSO env settings
+  problem_sig: "tsp"
+  n_particles: 2
+
+  # Problem general specific settings
+  n_dims: 2
+
+  training_cfg:
+    batch_size: 1
+    steps_per_epoch: 128
+  
+  validation_cfg:
+    batch_size: 1
+    random_include: False
+    random_size: 100
+    
+  test_cfg:
+    enable: True
+    batch_size: 1
+    random_include: False
+    random_size: 1280
+
+aco_agent:
+  n_cities: [20, 50, 100, 200, 500, 1000]
+  n_ants: [5, 10, 20, 20, 50, 100]
+  aco_iterations_infer: 10
+  n_gnn_feats: 2
+  use_nls: True
+  w_nls: 0.95
+
+log:
+  save_dir: "./logs"
+  name: "aco_tsp"
+  version: "default"

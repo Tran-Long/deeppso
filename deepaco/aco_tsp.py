@@ -66,13 +66,13 @@ class ACO():
         sparse_distances[edge_index_u, edge_index_v] = self.distances[edge_index_u, edge_index_v]
         self.heuristic = 1 / sparse_distances
     
-    def sample(self):
+    def sample(self, **kwargs):
         paths, log_probs = self.gen_path(require_prob=True)
         costs = self.gen_path_costs(paths)
-        return costs, log_probs
+        return costs, log_probs, paths
 
     @torch.no_grad()
-    def run(self, n_iterations):
+    def run(self, n_iterations, **kwargs):
         for _ in range(n_iterations):
             paths = self.gen_path(require_prob=False)
             costs = self.gen_path_costs(paths)

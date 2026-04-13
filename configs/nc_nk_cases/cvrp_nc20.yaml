@@ -1,10 +1,10 @@
 # @package _global_
 env:
   test_cfg:
-    batch_size: 2
+    batch_size: 32
     n_cities: 20
   training_cfg:
-    batch_size: 16
+    batch_size: 2
     n_cities: 20
   validation_cfg:
     batch_size: 32

@@ -12,5 +12,5 @@ rl_agent:
 rl_train:
   name: "MyopicI"
   args:
-    pso_iterations_train: 64
-    pso_iterations_infer: 96
+    pso_iterations_train: 32
+    pso_iterations_infer: 64

@@ -1,17 +1,18 @@
 # @package _global_
 env:
+  n_particles: 128
   test_cfg:
-    batch_size: 2
-    k_sparse: '[5, 10, 20, 20, 50, 100]'
-    mode: '"choice"'
-    n_cities: '[20, 50, 100, 200, 500, 1000]'
-  training_cfg:
     batch_size: 1
-    k_sparse: '[5, 10, 20, 20]'
-    mode: '"range"'
-    n_cities: '[20, 50, 100, 200]'
+    k_sparse: [5, 10, 20, 20, 50, 100]
+    mode: "choice"
+    n_cities: [20, 50, 100, 200, 500, 1000]
+  training_cfg:
+    batch_size: 2
+    k_sparse: [5, 10, 20, 20]
+    mode: "range"
+    n_cities: [20, 50, 100, 200]
   validation_cfg:
-    batch_size: 8
-    k_sparse: '[5, 10, 20, 20]'
-    mode: '"choice"'
-    n_cities: '[20, 50, 100, 200]'
+    batch_size: 1
+    k_sparse: [5, 10, 20, 20, 50]
+    mode: "choice"
+    n_cities: [20, 50, 100, 200, 500]
