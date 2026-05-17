@@ -140,8 +140,8 @@ class BaseRLAlgorithm(L.LightningModule):
             )
         self.val_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
 
-        if self.custom_logger:
-            self.custom_logger.save_population_stats()
+        # if self.custom_logger:
+        #     self.custom_logger.save_population_stats()
 
     def test_step(self, env: BaseEnv, idx, dataloader_idx=0):
         # # Same as validation step but logs to test_dataloader_idx2name and saves test gbest results separately
@@ -161,6 +161,7 @@ class BaseRLAlgorithm(L.LightningModule):
         )  # (B, dim, emb_dim)
 
         # 3. PSO loop
+        all_gbest_costs = []
         for pso_idx in range(self.pso_iterations_infer):
             wc1c2, _, _ = self.agent.get_action((*observations, problem_embeddings))
 
@@ -168,6 +169,8 @@ class BaseRLAlgorithm(L.LightningModule):
             observations, _, _, _, info = env.step_eval(
                 wc1c2, using_random=self.pso_using_random
             )
+
+            #### Logging
             # for i in range(env.batch_size):
             #     self.custom_logger.log_population_stats(
             #         self.test_dataloader_idx2name.get(dataloader_idx, dataloader_idx),
@@ -176,6 +179,12 @@ class BaseRLAlgorithm(L.LightningModule):
             #         info["population_costs"][i],
             #         info["gbest_cost"][i],
             #     )
+            #     all_gbest_costs.extend(info["gbest_cost"][i])
+            all_gbest_costs.append(info["gbest_cost"])
+        self.custom_logger.log_avg_gbest_cost(
+            self.test_dataloader_idx2name.get(dataloader_idx, dataloader_idx),
+            all_gbest_costs
+        )
 
         self.test_gbest_dataloader["wc1c2"][dataloader_idx] = (
             self.test_gbest_dataloader["wc1c2"].get(dataloader_idx, [])
@@ -199,3 +208,6 @@ class BaseRLAlgorithm(L.LightningModule):
                     # sync_dist=True,  # sync across devices for correct avg in DDP
                 )
         self.test_gbest_dataloader = {"initial": {}, "wc1c2": {}, "wc1c2_ls": {}}
+        if self.custom_logger:
+            self.custom_logger.save_population_stats()
+            self.custom_logger.save_avg_gbest_cost()

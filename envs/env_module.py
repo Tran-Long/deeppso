@@ -110,6 +110,9 @@ class EnvDataModule(L.LightningDataModule):
             self.test_problems_dict = self.problem_cls.get_test_instances(
                 device=device, **test_cfg, **kwargs
             )
+            self.test_problems_dict = {
+                n: self.test_problems_dict[n] for n in self.test_problems_dict if int(n.split("_")[0]) >= 100
+            }
             self.test_datasets_dict = {
                 name: [
                     self.env_cls(
@@ -119,7 +122,7 @@ class EnvDataModule(L.LightningDataModule):
                         **test_cfg,
                         **kwargs,
                     )
-                    for problem in problems
+                    for problem in problems[:10]
                 ]
                 for name, problems in self.test_problems_dict.items()
             }
@@ -128,6 +131,7 @@ class EnvDataModule(L.LightningDataModule):
             self.test_dataloader_idx2name = {
                 idx: name for idx, name in enumerate(self.test_datasets_dict.keys())
             }
+            print(f">>> Test datasets: {self.test_dataset_name}")
         else:
             self.test_problems_dict = {}
             self.test_datasets_dict = {}

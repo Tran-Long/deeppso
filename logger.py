@@ -1,6 +1,7 @@
 from enum import Enum
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -22,6 +23,7 @@ class CustomLogger:
             "population_costs": [],
             "gbest_costs": [],
         }
+        self.avg_gbest_iteration = {}
 
     def log_hparams(self, hparams_dict):
         with open(self.log_folder / "hparams.yaml", "w") as f:
@@ -42,3 +44,22 @@ class CustomLogger:
         self.current_validation_epoch += 1
         df = pd.DataFrame(self.population_stats)
         df.to_csv(self.log_folder / "population_stats.csv", index=False)
+
+    def log_avg_gbest_cost(self, dataloader_key, batch_gbest_costs):
+        # batch_gbest_costs shape: (n_iter, batch_size)
+        if dataloader_key not in self.avg_gbest_iteration:
+            self.avg_gbest_iteration[dataloader_key] = np.zeros((len(batch_gbest_costs), 0))
+        self.avg_gbest_iteration[dataloader_key] = np.concatenate(
+            [self.avg_gbest_iteration[dataloader_key], batch_gbest_costs], axis=1)
+    
+    def save_avg_gbest_cost(self):
+        d = {
+            "dataloader_key": [],
+        }
+        for dataloader_key, costs in self.avg_gbest_iteration.items():
+            d["dataloader_key"].append(dataloader_key)
+            avg_cost = np.mean(costs, axis=1) # Average over all batches for each iteration
+            for i in range(len(avg_cost)):
+                d[f"iter{i}"] = d.get(f"iter{i}", []) + [avg_cost[i]]
+        df = pd.DataFrame(d)
+        df.to_csv(self.log_folder / "avg_gbest_cost_iterations.csv", index=False)

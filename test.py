@@ -73,7 +73,6 @@ if __name__ == "__main__":
         device = trainer.accelerator.name() if trainer.accelerator else "cpu"
     print(f">>> Using device: {device}")
 
-    
     env_module = EnvDataModule(**config["env"], device=device)
 
     checkpoint_dir = os.path.join(args.folder, "checkpoints")
@@ -81,13 +80,16 @@ if __name__ == "__main__":
         f for f in os.listdir(checkpoint_dir) if f.endswith(".ckpt") and not f.startswith("epoch=")
     ]
     for ckpt_file in checkpoint_files:
-        csv_logger = pl_loggers.CSVLogger(
-            save_dir=test_folder.parent, 
-            name=test_folder.name,
-            version=ckpt_file.split(".ckpt")[0],
-        )
+        # csv_logger = pl_loggers.CSVLogger(
+        #     save_dir=test_folder.parent, 
+        #     name=test_folder.name,
+        #     version=ckpt_file.split(".ckpt")[0],
+        # )
+        if args.device:
+            config["trainer"]["devices"] = "auto"
         trainer = L.Trainer(
-            **config["trainer"], logger=csv_logger
+            **config["trainer"], 
+            # logger=csv_logger
         )
         ckpt_path = os.path.join(checkpoint_dir, ckpt_file)
         state_dict = torch.load(ckpt_path, map_location=device)["state_dict"]
@@ -95,7 +97,7 @@ if __name__ == "__main__":
         rl_agent = init_module(config["rl_agent"])
         
         rl_train = init_module(
-            config["rl_train"], agent=rl_agent,
+            config["rl_train"], agent=rl_agent, custom_logger=CustomLogger(test_folder / ckpt_file.split(".ckpt")[0])
         )
         rl_train.load_state_dict(state_dict, strict=True)
         rl_train.test_dataloader_idx2name = (
@@ -104,3 +106,4 @@ if __name__ == "__main__":
         # best_model = rl_train.__class__.load_from_checkpoint(ckpt_path, agent=rl_agent)
         print(">>> Testing checkpoint:", ckpt_file)
         trainer.test(rl_train, datamodule=env_module)
+        break
